@@ -4,6 +4,11 @@ Passive Threat Intelligence tool for corporate domains. Two analysis pipelines:
   1. Email Breach (Hunter.io → Leak-Lookup → AI report on credential exposure)
   2. Network Intel (DNS → ZoomEye + Censys + LeakIX → merged host table + AI report)
 
+Synergistic mode adds three additional rounds:
+  Round 2 — subdomain→network, network→targeted dorking, email-IP correlation
+  Round 3 — LLM entity extraction + follow-up scans
+  Final   — unified cross-correlated report + connection graph
+
 No active scanning — all data comes from pre-indexed public sources.
 
 Usage:
@@ -28,6 +33,9 @@ from modules.leakix_client import fetch_leakix
 from modules.zoomeye_client import fetch_zoomeye
 from modules.ui import render_host_metrics, render_consolidated_table
 from modules.dashboard_map import render_heatmap, generate_mock_province_data
+from modules.scan_context import ScanContext
+from modules.orchestrator import run_round1, run_round2, run_round3, run_final, estimate_api_calls
+from modules.graph_builder import render_connection_graph
 from utils.config import get_api_keys
 
 _GEMINI_MODEL = "gemini-2.5-flash"
@@ -64,6 +72,14 @@ def _render_sidebar(env: dict[str, str]) -> dict:
         _status("Google Dorking", bool(env["GOOGLE_SEARCH_API_KEY"]) and bool(env["GOOGLE_CX_ID"]))
         _status("AI Reports (Gemini)", bool(env["GEMINI_API_KEY"]))
         st.markdown("---")
+
+        st.header("🔄 Analisi Sinotica")
+        max_subs = st.slider(
+            "Max sottodomini da scansionare (Round 2)",
+            min_value=5, max_value=50, value=20, step=5,
+            key="max_subdomain_scans",
+            help="Più sottodomini = più chiamate API ma analisi più completa.",
+        )
         st.caption("Subdomain Enumeration (crt.sh) sempre attivo — nessuna key richiesta.")
 
     return {
@@ -79,6 +95,7 @@ def _render_sidebar(env: dict[str, str]) -> dict:
         "leakix_key": env["LEAKIX_API_KEY"],
         "google_search_key": env["GOOGLE_SEARCH_API_KEY"],
         "google_cx_id": env["GOOGLE_CX_ID"],
+        "max_subdomain_scans": max_subs,
     }
 
 
@@ -371,6 +388,206 @@ def _run_network_intel_pipeline(
             st.json(debug)
 
 
+# ── Synergistic orchestration ──────────────────────────────────────────────────
+
+def _render_synergy_tab(
+    domain: str,
+    config: dict,
+    tab: "st.delta_generator.DeltaGenerator",
+) -> None:
+    """Manages the multi-round synergistic scan via session state phase machine."""
+    with tab:
+        phase = st.session_state.get("scan_phase", "idle")
+        ctx: ScanContext | None = st.session_state.get("scan_ctx")
+
+        # Check if domain changed — reset if so
+        if ctx is not None and ctx.domain != domain:
+            st.session_state.scan_phase = "idle"
+            st.session_state.scan_ctx = None
+            phase = "idle"
+            ctx = None
+
+        if phase == "idle":
+            st.info(
+                "🔄 **Analisi Sinotica** — esegui Round 1 (tramite il pulsante principale 'Analizza') "
+                "per avviare il processo multi-round."
+            )
+            return
+
+        if phase == "round1_running":
+            with st.spinner("⚙️ Round 1: scansioni base in corso…"):
+                ctx_obj = ScanContext(domain=domain, config=config)
+                ctx_obj = run_round1(ctx_obj)
+                st.session_state.scan_ctx = ctx_obj
+                st.session_state.scan_phase = "awaiting_confirm"
+            st.rerun()
+            return
+
+        if phase == "awaiting_confirm":
+            assert ctx is not None
+            max_subs = config.get("max_subdomain_scans", 20)
+            estimate = estimate_api_calls(ctx, max_subs)
+
+            st.success(f"✅ Round 1 completato. Trovati: **{len(ctx.subdomains)} sottodomini**, "
+                       f"**{len(ctx.emails)} email**, IP primario: `{ctx.primary_ip or 'N/D'}`")
+            st.markdown("---")
+
+            st.subheader("📊 Stima Chiamate API — Round 2 + Round 3")
+            c1, c2, c3, c4 = st.columns(4)
+            c1.metric("Subdomain network", estimate["subdomain_network_calls"])
+            c2.metric("Dorking mirato", estimate["targeted_dork_calls"])
+            c3.metric("LeakLookup", estimate["leaklookup_calls"])
+            c4.metric("Totale stimato", estimate["total"])
+
+            st.info(
+                f"Sottodomini da scansionare: **{estimate['subdomini_da_scansionare']}** "
+                f"(max {max_subs} configurato nella sidebar) · "
+                f"ZoomEye: {estimate['zoomeye_calls']} · "
+                f"Censys: {estimate['censys_calls']} · "
+                f"LeakIX: {estimate['leakix_calls']} · "
+                f"Gemini: {estimate['gemini_calls']} chiamate"
+            )
+
+            if st.button("▶ Avvia Analisi Sinotica (Round 2 + 3 + Finale)", type="primary"):
+                st.session_state.scan_phase = "round2_running"
+                st.rerun()
+            return
+
+        if phase == "round2_running":
+            assert ctx is not None
+            max_subs = config.get("max_subdomain_scans", 20)
+            with st.spinner(f"⚙️ Round 2: scansione {min(len(ctx.subdomains), max_subs)} sottodomini + dorking mirato + correlazioni email-IP…"):
+                ctx = run_round2(ctx, max_subs)
+                st.session_state.scan_ctx = ctx
+                st.session_state.scan_phase = "round3_running"
+            st.rerun()
+            return
+
+        if phase == "round3_running":
+            assert ctx is not None
+            with st.spinner("🤖 Round 3: Gemini analizza i dati e suggerisce entità aggiuntive…"):
+                ctx = run_round3(ctx)
+                st.session_state.scan_ctx = ctx
+                st.session_state.scan_phase = "final_running"
+            st.rerun()
+            return
+
+        if phase == "final_running":
+            assert ctx is not None
+            with st.spinner("📋 Generazione report unificato + grafo connessioni…"):
+                ctx = run_final(ctx)
+                st.session_state.scan_ctx = ctx
+                st.session_state.scan_phase = "final"
+            st.rerun()
+            return
+
+        if phase == "final":
+            assert ctx is not None
+            st.success("✅ Analisi Sinotica completata!")
+
+            # Summary metrics
+            n_sub_scanned = sum(1 for r in ctx.subdomain_results if r.merged_host)
+            n_correlated = sum(1 for c in ctx.email_ip_correlations if c.correlated_ips)
+            n_targeted_docs = len(ctx.targeted_dork_results)
+            n_exposed_svcs = len(ctx.exposed_services)
+            n_followup = len(ctx.follow_up_host_results)
+
+            c1, c2, c3, c4, c5 = st.columns(5)
+            c1.metric("Sottodomini scansionati", n_sub_scanned)
+            c2.metric("Servizi esposti", n_exposed_svcs)
+            c3.metric("Documenti mirati trovati", n_targeted_docs)
+            c4.metric("Correlazioni email-IP", n_correlated)
+            c5.metric("Entità Round 3", n_followup)
+
+            # Exposed services table
+            if ctx.exposed_services:
+                st.subheader("⚠️ Servizi Sensibili Rilevati")
+                svc_df = pd.DataFrame([
+                    {"IP": s.ip, "Porta": s.port, "Servizio": s.service_name, "Prodotto": s.product}
+                    for s in ctx.exposed_services
+                ])
+                st.dataframe(svc_df.style.hide(axis="index"), width="stretch")
+
+            # Email-IP correlation table
+            if n_correlated > 0:
+                st.subheader("🔗 Correlazioni Email ↔ IP Rilevate")
+                corr_rows = [
+                    {
+                        "Email": c.email,
+                        "Breach Sources": ", ".join(c.breach_sources),
+                        "IP Correlati": ", ".join(c.correlated_ips),
+                        "Match LeakIX": len(c.leakix_summary_matches),
+                    }
+                    for c in ctx.email_ip_correlations
+                    if c.correlated_ips
+                ]
+                if corr_rows:
+                    st.dataframe(pd.DataFrame(corr_rows).style.hide(axis="index"), width="stretch")
+
+            # Round 3 suggested entities
+            if ctx.llm_suggested_ips or ctx.llm_suggested_domains:
+                st.subheader("🤖 Entità Suggerite da Gemini (Round 3)")
+                col_ip, col_dom = st.columns(2)
+                with col_ip:
+                    st.markdown("**IP aggiuntivi investigati:**")
+                    for ip in ctx.llm_suggested_ips:
+                        st.code(ip)
+                with col_dom:
+                    st.markdown("**Domini correlati investigati:**")
+                    for dom in ctx.llm_suggested_domains:
+                        st.code(dom)
+
+
+def _render_graph_tab(tab: "st.delta_generator.DeltaGenerator") -> None:
+    with tab:
+        ctx: ScanContext | None = st.session_state.get("scan_ctx")
+        phase = st.session_state.get("scan_phase", "idle")
+
+        if phase != "final" or ctx is None or ctx.graph_data is None:
+            st.info("ℹ️ Completa l'Analisi Sinotica per visualizzare il grafo delle connessioni.")
+            return
+
+        fig = render_connection_graph(ctx.graph_data)
+        st.plotly_chart(fig, use_container_width=True)
+
+        # Legend
+        with st.expander("📖 Legenda"):
+            legend_items = [
+                ("🔵 Dominio", "Il dominio target principale"),
+                ("🟣 IP", "Indirizzi IP risolti (primari o da sottodomini)"),
+                ("🔷 Sottodominio", "Sottodomini rilevati via crt.sh"),
+                ("🟠 Email", "Email trovate tramite Hunter.io"),
+                ("🔴 Breach", "Fonti di data breach (Leak-Lookup)"),
+                ("🩷 Porta/Servizio", "Porte/servizi esposti rilevati"),
+                ("🟡 Documento", "File sensibili trovati via Google Dorking"),
+            ]
+            for icon_label, description in legend_items:
+                st.markdown(f"**{icon_label}** — {description}")
+
+
+def _render_report_tab(tab: "st.delta_generator.DeltaGenerator") -> None:
+    with tab:
+        ctx: ScanContext | None = st.session_state.get("scan_ctx")
+        phase = st.session_state.get("scan_phase", "idle")
+
+        if phase != "final" or ctx is None:
+            st.info("ℹ️ Completa l'Analisi Sinotica per visualizzare il report unificato.")
+            return
+
+        if not ctx.unified_report:
+            st.warning("⚠️ Report unificato non disponibile (Gemini API Key mancante o errore).")
+            return
+
+        st.markdown(ctx.unified_report)
+        st.markdown("---")
+        st.download_button(
+            label="⬇️ Scarica Report (Markdown)",
+            data=ctx.unified_report,
+            file_name=f"osint_report_{ctx.domain}.md",
+            mime="text/markdown",
+        )
+
+
 # ── Heatmap page ───────────────────────────────────────────────────────────────
 
 _CYBER_CSS = """
@@ -496,6 +713,10 @@ def _render_analysis_page(config: dict) -> None:
 
     if "scan_count" not in st.session_state:
         st.session_state.scan_count = 0
+    if "scan_phase" not in st.session_state:
+        st.session_state.scan_phase = "idle"
+    if "scan_ctx" not in st.session_state:
+        st.session_state.scan_ctx = None
 
     col_input, col_btn = st.columns([4, 1])
     with col_input:
@@ -512,7 +733,7 @@ def _render_analysis_page(config: dict) -> None:
     if remaining < _MAX_SCANS_PER_SESSION:
         st.caption(f"Analisi questa sessione: {st.session_state.scan_count}/{_MAX_SCANS_PER_SESSION}")
 
-    if not analyze_btn:
+    if not analyze_btn and st.session_state.scan_phase == "idle":
         st.markdown(
             """
             #### Come usare OSINT Risk Mapper
@@ -525,43 +746,112 @@ def _render_analysis_page(config: dict) -> None:
             | 🌐 Network Intel | DNS resolve → Host scan passivo → AI report | ZoomEye + Censys + LeakIX |
             | 🔗 Subdomain Enumeration | CT log query → dedup → tabella sottodomini | crt.sh (gratuito) |
             | 📄 Google Dorking | Dork query → file sensibili esposti | Google Custom Search |
+            | 🔄 Analisi Sinotica | Multi-round sinergico: subdomini→network, network→dorking, email↔IP | Tutte le fonti |
+            | 🕸️ Grafo Connessioni | Visualizzazione grafo interattivo delle relazioni | — |
+            | 📋 Report Unificato | Report cross-correlato via Gemini con catene di attacco | Gemini AI |
             """
         )
         return
 
-    if st.session_state.scan_count >= _MAX_SCANS_PER_SESSION:
+    if st.session_state.scan_count >= _MAX_SCANS_PER_SESSION and analyze_btn:
         st.warning(
             f"⚠️ Limite di {_MAX_SCANS_PER_SESSION} analisi per sessione raggiunto. "
             "Ricarica la pagina per continuare."
         )
         st.stop()
 
-    domain = (
-        domain.strip().lower()
-        .removeprefix("https://")
-        .removeprefix("http://")
-        .rstrip("/")
-    )
+    if analyze_btn:
+        domain = (
+            domain.strip().lower()
+            .removeprefix("https://")
+            .removeprefix("http://")
+            .rstrip("/")
+        )
+
+        if not domain:
+            st.error("❌ Inserisci un nome a dominio prima di procedere.")
+            return
+
+        # Reset synergistic state for new domain
+        current_ctx: ScanContext | None = st.session_state.get("scan_ctx")
+        if current_ctx is None or current_ctx.domain != domain:
+            st.session_state.scan_phase = "round1_running"
+            st.session_state.scan_ctx = None
+
+        st.session_state.scan_count += 1
+
+    # Retrieve domain from active context if not coming from a button press
+    if not analyze_btn:
+        current_ctx = st.session_state.get("scan_ctx")
+        if current_ctx:
+            domain = current_ctx.domain
+        elif not domain:
+            return
 
     if not domain:
-        st.error("❌ Inserisci un nome a dominio prima di procedere.")
         return
 
-    st.session_state.scan_count += 1
-
-    tab_email, tab_network, tab_subdomains, tab_dorking = st.tabs([
-        "📧 Email Breach", "🌐 Network Intel", "🔗 Subdomain Enumeration",
+    tab_email, tab_network, tab_subdomains, tab_dorking, tab_synergy, tab_graph, tab_report = st.tabs([
+        "📧 Email Breach",
+        "🌐 Network Intel",
+        "🔗 Subdomain Enumeration",
         "📄 Google Dorking",
+        "🔄 Analisi Sinotica",
+        "🕸️ Grafo Connessioni",
+        "📋 Report Unificato",
     ])
 
-    subdomains = _run_subdomain_pipeline(domain, tab_subdomains)
-    exposed_documents = _run_dorking_pipeline(domain, config, tab_dorking)
-    _run_email_breach_pipeline(
-        domain, config, tab_email,
-        subdomains=subdomains,
-        exposed_documents=exposed_documents,
-    )
-    _run_network_intel_pipeline(domain, config, tab_network)
+    # Handle synergy phase machine first (may trigger reruns)
+    _render_synergy_tab(domain, config, tab_synergy)
+
+    # Standard pipelines (always run on Analizza click)
+    if analyze_btn or st.session_state.get("scan_phase") in ("round1_running",):
+        subdomains = _run_subdomain_pipeline(domain, tab_subdomains)
+        exposed_documents = _run_dorking_pipeline(domain, config, tab_dorking)
+        _run_email_breach_pipeline(
+            domain, config, tab_email,
+            subdomains=subdomains,
+            exposed_documents=exposed_documents,
+        )
+        _run_network_intel_pipeline(domain, config, tab_network)
+    else:
+        # Populate tabs from existing context if available
+        ctx = st.session_state.get("scan_ctx")
+        if ctx:
+            with tab_subdomains:
+                if ctx.subdomains:
+                    st.success(f"✅ **{len(ctx.subdomains)} sottodomini unici** (da Round 1)")
+                    df = pd.DataFrame({"Sottodomini Rilevati": ctx.subdomains})
+                    st.dataframe(df.style.hide(axis="index"), width="stretch")
+            with tab_dorking:
+                if ctx.exposed_documents:
+                    st.warning(f"⚠️ **{len(ctx.exposed_documents)} file** trovati (da Round 1)")
+                    df = pd.DataFrame(ctx.exposed_documents).rename(
+                        columns={"title": "Nome File/Titolo", "url": "URL"}
+                    )
+                    st.dataframe(df.style.hide(axis="index"), width="stretch")
+                else:
+                    st.success("✅ Nessun documento sensibile rilevato (Round 1)")
+            with tab_email:
+                if ctx.breach_data:
+                    compromised = sum(1 for v in ctx.breach_data.values() if v)
+                    st.success(f"✅ {compromised}/{len(ctx.breach_data)} email con breach (da Round 1)")
+                    df = _build_breach_dataframe(ctx.breach_data)
+                    _render_breach_table(df)
+                elif ctx.emails:
+                    st.info(f"📧 {len(ctx.emails)} email trovate, nessun breach rilevato (Round 1)")
+                else:
+                    st.info("ℹ️ Nessuna email trovata (Round 1)")
+            with tab_network:
+                if ctx.primary_host and ctx.primary_host.get("sources_ok"):
+                    render_host_metrics(ctx.primary_host)
+                    df = to_dataframe(ctx.primary_host)
+                    render_consolidated_table(df)
+                else:
+                    st.info("ℹ️ Nessun dato network disponibile (Round 1)")
+
+    _render_graph_tab(tab_graph)
+    _render_report_tab(tab_report)
 
 
 # ── Main ───────────────────────────────────────────────────────────────────────
