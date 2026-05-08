@@ -15,6 +15,7 @@ _KEYS = [
     "GEMINI_API_KEY",
     "SERPER_API_KEY",
     "SERPAPI_KEY",
+    "OPENCORPORATES_API_KEY",
 ]
 
 

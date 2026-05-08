@@ -31,6 +31,10 @@ class ScanContext:
     domain: str
     config: dict[str, str]
 
+    # User-provided target context (from onboarding form)
+    target_context: dict = field(default_factory=dict)
+    # {company_name: str, owner_names: list[str], city: str, contact_email: str}
+
     # Round 1 — discovery
     emails: list[str] = field(default_factory=list)
     scraped_contacts: dict = field(default_factory=dict)
@@ -39,12 +43,23 @@ class ScanContext:
     vt_subdomains: list[str] = field(default_factory=list)
     exposed_documents: list[dict] = field(default_factory=list)
     person_names: list[str] = field(default_factory=list)
+    piva: str | None = None  # Partita IVA extracted from scraping or WHOIS
+
+    # Round 1.5 — Gemini strategic guidance + company registry + PhoneBook
+    gemini_guidance: dict = field(default_factory=dict)
+    # Keys: company_aliases, related_domains, key_people, piva, dork_queries, sector
+    company_officers: list[dict] = field(default_factory=list)
+    # Each: {name, role, current, start_date, company_name, company_url}
+    phonebook_emails: list[str] = field(default_factory=list)
+    related_domains: list[str] = field(default_factory=list)
 
     # Round 2 — enrichment
     breach_results: list[BreachResult] = field(default_factory=list)
     social_profiles: list[SocialProfile] = field(default_factory=list)
     social_dork_results: list[dict] = field(default_factory=list)
     brand_dork_results: list[dict] = field(default_factory=list)
+    instagram_results: list[dict] = field(default_factory=list)
+    facebook_results: list[dict] = field(default_factory=list)
 
     # Round 3 — LLM-guided iteration
     llm_suggested_people: list[str] = field(default_factory=list)

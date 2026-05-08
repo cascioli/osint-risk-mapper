@@ -104,13 +104,20 @@ def search_linkedin_profiles(
     api_key: str,
     fallback_key: str = "",
     num_results: int = 5,
+    city: str = "",
 ) -> list[dict[str, str]]:
-    """Search for LinkedIn profiles matching a person name and company."""
+    """Search for LinkedIn profiles matching a person name.
+
+    Adds company and city to narrow results when available.
+    Returns multiple candidates — caller must not assume they are the correct person.
+    """
     if not name:
         return []
     query = f'site:linkedin.com "{name}"'
     if company:
         query += f' "{company}"'
+    if city:
+        query += f' "{city}"'
     return search_by_query(query, api_key, num_results, fallback_key)
 
 
@@ -119,11 +126,18 @@ def search_twitter_presence(
     api_key: str,
     fallback_key: str = "",
     num_results: int = 5,
+    city: str = "",
 ) -> list[dict[str, str]]:
-    """Search for Twitter/X presence for a company."""
+    """Search for Twitter/X presence for a company or person name.
+
+    Adds city context when available to reduce false positives.
+    Results are candidates, not verified identities.
+    """
     if not company:
         return []
     query = f'site:twitter.com "{company}" OR site:x.com "{company}"'
+    if city:
+        query += f' "{city}"'
     return search_by_query(query, api_key, num_results, fallback_key)
 
 
@@ -160,15 +174,123 @@ def search_pastebin_mentions(
 
 
 def search_brand_documents(
+    domain: str,
     company: str,
     api_key: str,
     fallback_key: str = "",
     num_results: int = 10,
 ) -> list[dict[str, str]]:
-    """Search for publicly indexed documents mentioning the company name."""
-    if not company:
+    """Search for documents directly tied to this specific domain.
+
+    Two targeted queries:
+    1. Documents hosted ON the domain (site:domain filetype:...)
+    2. External documents that reference the domain URL explicitly
+
+    Deliberately avoids pure company-name searches — too many false positives
+    when company names are common (e.g. "Farmacia Fontana" returns all Italian
+    pharmacies with that name).
+    """
+    if not domain:
         return []
-    query = f'"{company}" filetype:pdf OR filetype:doc OR filetype:xls OR filetype:xlsx'
+
+    results: list[dict[str, str]] = []
+    seen_urls: set[str] = set()
+
+    def _add(items: list[dict]) -> None:
+        for item in items:
+            if item.get("url") not in seen_urls:
+                seen_urls.add(item["url"])
+                results.append(item)
+
+    # 1. Documents hosted on the domain itself
+    q1 = f"site:{domain} filetype:pdf OR filetype:doc OR filetype:docx OR filetype:xls OR filetype:xlsx"
+    try:
+        _add(search_by_query(q1, api_key, num_results, fallback_key))
+    except RuntimeError:
+        pass
+
+    # 2. External documents that explicitly cite this domain URL
+    q2 = f'"{domain}" filetype:pdf OR filetype:doc'
+    try:
+        _add(search_by_query(q2, api_key, num_results // 2, fallback_key))
+    except RuntimeError:
+        pass
+
+    return results
+
+
+def search_instagram_profiles(
+    name: str,
+    company: str,
+    api_key: str,
+    fallback_key: str = "",
+    num_results: int = 5,
+    city: str = "",
+) -> list[dict[str, str]]:
+    """Search Instagram for profiles matching a person or company name.
+
+    Adds company and city context to reduce false positives.
+    Returns multiple candidates — caller must not assume verified identity.
+    """
+    if not name and not company:
+        return []
+    query = f'site:instagram.com "{name or company}"'
+    if name and company:
+        query += f' "{company}"'
+    if city:
+        query += f' "{city}"'
+    return search_by_query(query, api_key, num_results, fallback_key)
+
+
+def search_facebook_profiles(
+    name_or_company: str,
+    api_key: str,
+    fallback_key: str = "",
+    num_results: int = 5,
+    city: str = "",
+) -> list[dict[str, str]]:
+    """Search Facebook for pages or profiles matching a company or person name.
+
+    Results are candidates — caller must verify relevance.
+    """
+    if not name_or_company:
+        return []
+    query = f'site:facebook.com "{name_or_company}"'
+    if city:
+        query += f' "{city}"'
+    return search_by_query(query, api_key, num_results, fallback_key)
+
+
+def search_piva_mentions(
+    piva: str,
+    api_key: str,
+    fallback_key: str = "",
+    num_results: int = 10,
+) -> list[dict[str, str]]:
+    """Search for sites and documents mentioning a specific Italian VAT number (P.IVA).
+
+    Finds related company properties, registrations, and external references.
+    """
+    if not piva:
+        return []
+    query = f'"{piva}"'
+    return search_by_query(query, api_key, num_results, fallback_key)
+
+
+def search_email_pattern_external(
+    domain: str,
+    api_key: str,
+    fallback_key: str = "",
+    num_results: int = 10,
+) -> list[dict[str, str]]:
+    """Search for email addresses at a domain mentioned on external sites.
+
+    Finds employee emails in documents, forum posts, LinkedIn profiles, etc.
+    Excludes the domain itself to focus on external references only.
+    """
+    if not domain:
+        return []
+    query = f'"@{domain}" -site:{domain}'
     return search_by_query(query, api_key, num_results, fallback_key)
 
 

@@ -23,7 +23,7 @@ import streamlit as st
 
 from modules.dashboard_map import generate_mock_province_data, render_heatmap
 from modules.graph_builder import render_connection_graph
-from modules.orchestrator import run_final, run_round1, run_round2, run_round3
+from modules.orchestrator import run_final, run_round1, run_round1_5, run_round2, run_round3
 from modules.scan_context import ScanContext
 from utils.config import get_api_keys
 
@@ -50,9 +50,11 @@ def _render_sidebar(env: dict[str, str]) -> dict:
         st.markdown("---")
 
         st.header("⚙️ Stato Servizi")
-        _status("Web Scraping (BeautifulSoup)", True)
+        _status("Web Scraping + P.IVA", True)
         _status("WHOIS (python-whois)", True)
         _status("Subdomains crt.sh", True)
+        _status("Registro Imprese (OpenCorporates)", bool(env["OPENCORPORATES_API_KEY"]))
+        _status("PhoneBook.cz email", True)
         _status("Subdomains (VirusTotal)", bool(env["VIRUSTOTAL_API_KEY"]))
         _status("Email Discovery (Hunter.io)", bool(env["HUNTER_API_KEY"]))
         _status("Breach Check (HIBP)", bool(env["HIBP_API_KEY"]))
@@ -81,6 +83,7 @@ def _render_sidebar(env: dict[str, str]) -> dict:
         "vt_key": env["VIRUSTOTAL_API_KEY"],
         "serper_key": env["SERPER_API_KEY"],
         "serpapi_key": env["SERPAPI_KEY"],
+        "opencorporates_key": env["OPENCORPORATES_API_KEY"],
         "max_people_dork": max_people,
     }
 
@@ -129,21 +132,27 @@ def _render_idle_welcome() -> None:
 
     | Modulo | Fonte | Round |
     |--------|-------|-------|
-    | Web Scraping (contatti, social, tech) | BeautifulSoup | 1 |
+    | Web Scraping (contatti, social, tech, P.IVA) | BeautifulSoup | 1 |
     | WHOIS (registrante, org, date) | python-whois | 1 |
     | Subdomain Enum | crt.sh + VirusTotal | 1 |
     | Email Discovery | Hunter.io + scraping | 1 |
     | Documenti esposti | Google Dorking | 1 |
+    | Guidance strategica (settore, persone, domini) | Gemini | 1.5 |
+    | Registro Imprese (titolari, soci, ruoli) | OpenCorporates | 1.5 |
+    | Email discovery aggiuntiva | PhoneBook.cz | 1.5 |
     | Breach Check Email | HIBP + Leak-Lookup | 2 |
     | Social Dork (LinkedIn, Twitter) | Google Dorking | 2 |
+    | Social Dork (Instagram, Facebook) | Google Dorking | 2 |
+    | P.IVA Dork (domini correlati) | Google Dorking | 2 |
+    | Email pattern esterno | Google Dorking | 2 |
     | GitHub + Pastebin Dork | Google Dorking | 2 |
-    | LLM Entity Extraction | Gemini | 3 |
+    | LLM Entity Extraction (deep dive) | Gemini | 3 |
     | Unified Report + Graph | Gemini | Final |
     """)
 
 
-def _render_running_phase(config: dict, domain: str) -> None:
-    ctx = ScanContext(domain=domain, config=config)
+def _render_running_phase(config: dict, domain: str, target_context: dict) -> None:
+    ctx = ScanContext(domain=domain, config=config, target_context=target_context)
     st.session_state.scan_log = []
     LOG_MAX = 40
 
@@ -160,6 +169,7 @@ def _render_running_phase(config: dict, domain: str) -> None:
 
     max_people = config.get("max_people_dork", 5)
     ctx = run_round1(ctx, log_fn=log_fn, progress_fn=progress_fn)
+    ctx = run_round1_5(ctx, log_fn=log_fn, progress_fn=progress_fn)
     ctx = run_round2(ctx, max_people=max_people, log_fn=log_fn, progress_fn=progress_fn)
     ctx = run_round3(ctx, log_fn=log_fn, progress_fn=progress_fn)
     ctx = run_final(ctx, log_fn=log_fn, progress_fn=progress_fn)
@@ -212,6 +222,16 @@ def _build_csv_zip(ctx: ScanContext) -> bytes:
         if ctx.whois_data:
             zf.writestr("whois.csv", pd.DataFrame([ctx.whois_data]).to_csv(index=False))
 
+        if ctx.company_officers:
+            zf.writestr("officers.csv", pd.DataFrame(ctx.company_officers).to_csv(index=False))
+
+        if ctx.related_domains:
+            zf.writestr("related_domains.csv", pd.DataFrame({"domain": ctx.related_domains}).to_csv(index=False))
+
+        ig_fb = ctx.instagram_results + ctx.facebook_results
+        if ig_fb:
+            zf.writestr("instagram_facebook.csv", pd.DataFrame(ig_fb).to_csv(index=False))
+
     return buf.getvalue()
 
 
@@ -229,12 +249,16 @@ def _build_report_md(ctx: ScanContext) -> str:
         "",
         "## Riepilogo",
         f"- Persone identificate: {len(all_people)}",
+        f"- Titolari/Soci (OpenCorporates): {len(ctx.company_officers)}",
         f"- Email trovate: {len(ctx.emails)}",
         f"- Email compromesse: {n_breached}",
+        f"- P.IVA: {ctx.piva or 'non trovata'}",
+        f"- Domini correlati (stimati): {len(ctx.related_domains)}",
         f"- Profili social: {len(ctx.social_profiles) + len(ctx.social_dork_results)}",
+        f"- Instagram/Facebook: {len(ctx.instagram_results) + len(ctx.facebook_results)}",
         f"- Sottodomini: {len(ctx.subdomains) + len(ctx.vt_subdomains)}",
         f"- Documenti esposti: {len(all_docs)}",
-        f"- Entità Round 3: {len(ctx.person_profiles)}",
+        f"- Settore (Gemini): {ctx.gemini_guidance.get('sector') or 'N/D'}",
         "",
     ]
     if ctx.unified_report:
@@ -305,10 +329,40 @@ def _render_final_phase(ctx: ScanContext) -> None:
                 st.markdown("**Telefoni trovati:**")
                 for phone in scraping_contacts["phones"]:
                     st.code(phone)
+            if ctx.piva:
+                st.markdown(f"**P.IVA estratta:** `{ctx.piva}`")
             if scraping_contacts.get("tech_hints"):
                 st.markdown(f"**Tecnologie rilevate:** {', '.join(scraping_contacts['tech_hints'])}")
         else:
             st.info("Nessuna persona identificata.")
+
+    with st.expander("🏢 Titolari e Soci (OpenCorporates)", expanded=bool(ctx.company_officers)):
+        if ctx.company_officers:
+            rows = [
+                {
+                    "Nome": o["name"],
+                    "Ruolo": o.get("role") or "—",
+                    "In carica": "✅" if o.get("current") else "❌",
+                    "Dal": o.get("start_date") or "—",
+                    "Azienda (Registro)": o.get("company_name") or "—",
+                }
+                for o in ctx.company_officers
+            ]
+            st.dataframe(pd.DataFrame(rows).style.hide(axis="index"), use_container_width=True)
+            if ctx.company_officers[0].get("company_url"):
+                st.caption(f"Fonte: {ctx.company_officers[0]['company_url']}")
+        else:
+            st.info("Nessun dato dal Registro Imprese (OpenCorporates).")
+
+    with st.expander("🌐 Domini Correlati", expanded=bool(ctx.related_domains)):
+        if ctx.related_domains:
+            st.caption("⚠️ Domini stimati da Gemini — non verificati. Richiedono conferma manuale.")
+            st.dataframe(
+                pd.DataFrame({"Dominio (stimato)": ctx.related_domains}).style.hide(axis="index"),
+                use_container_width=True,
+            )
+        else:
+            st.info("Nessun dominio correlato identificato.")
 
     with st.expander("🌐 WHOIS", expanded=bool(ctx.whois_data)):
         if ctx.whois_data:
@@ -324,7 +378,18 @@ def _render_final_phase(ctx: ScanContext) -> None:
         else:
             st.info("Nessun dato email disponibile.")
 
-    with st.expander("🔗 Profili Social Trovati", expanded=bool(n_social)):
+    with st.expander("📷 Instagram / Facebook", expanded=bool(ctx.instagram_results or ctx.facebook_results)):
+        ig_fb_rows = (
+            [{"Piattaforma": "Instagram", "URL": r.get("url", ""), "Titolo": r.get("title", ""), "Persona": r.get("person", "—"), "Verificato": "❌"} for r in ctx.instagram_results]
+            + [{"Piattaforma": "Facebook", "URL": r.get("url", ""), "Titolo": r.get("title", ""), "Persona": "—", "Verificato": "❌"} for r in ctx.facebook_results]
+        )
+        if ig_fb_rows:
+            st.caption("⚠️ Risultati dork — non verificati. Valutare contesto prima di trarre conclusioni.")
+            st.dataframe(pd.DataFrame(ig_fb_rows).style.hide(axis="index"), use_container_width=True)
+        else:
+            st.info("Nessun risultato Instagram/Facebook.")
+
+    with st.expander("🔗 Profili Social Trovati (LinkedIn / Twitter)", expanded=bool(n_social)):
         scraped_rows = [
             {"Piattaforma": p.platform, "URL": p.url, "Fonte": p.source}
             for p in ctx.social_profiles
@@ -522,6 +587,40 @@ def _render_analysis_page(config: dict) -> None:
         if st.session_state.scan_count > 0:
             st.caption(f"Analisi questa sessione: {st.session_state.scan_count}/{_MAX_SCANS_PER_SESSION}")
 
+        with st.expander("📋 Informazioni aggiuntive sul target (raccomandato)", expanded=False):
+            st.caption(
+                "Fornisci contesto per migliorare la qualità dei risultati. "
+                "Tutti i campi sono opzionali — anche poche informazioni aiutano."
+            )
+            tc_company = st.text_input(
+                "Nome azienda",
+                placeholder="es. Farmacia Fontana",
+                key="tc_company",
+                help="Nome commerciale o ragione sociale. Usato per dork più mirati.",
+            )
+            tc_owners_raw = st.text_area(
+                "Titolari / dipendenti noti (uno per riga)",
+                placeholder="Mario Rossi\nLuisa Bianchi",
+                key="tc_owners",
+                height=80,
+                help="Nomi di persone associate all'azienda. Accelera la ricerca social.",
+            )
+            col_city, col_email = st.columns(2)
+            with col_city:
+                tc_city = st.text_input(
+                    "Città / Regione",
+                    placeholder="es. Milano",
+                    key="tc_city",
+                    help="Aiuta a filtrare risultati geograficamente non pertinenti.",
+                )
+            with col_email:
+                tc_email = st.text_input(
+                    "Email di contatto nota",
+                    placeholder="es. info@azienda.it",
+                    key="tc_email",
+                    help="Se già conosci un'email aziendale, aggiungila per il breach check.",
+                )
+
         if analyze_btn:
             if st.session_state.scan_count >= _MAX_SCANS_PER_SESSION:
                 st.warning(
@@ -538,6 +637,18 @@ def _render_analysis_page(config: dict) -> None:
             if not domain_clean:
                 st.error("❌ Inserisci un nome a dominio prima di procedere.")
                 return
+            # Parse owner names (one per line)
+            owner_names = [
+                n.strip() for n in tc_owners_raw.splitlines()
+                if n.strip()
+            ] if tc_owners_raw else []
+
+            st.session_state.target_context = {
+                "company_name": tc_company.strip(),
+                "owner_names": owner_names,
+                "city": tc_city.strip(),
+                "contact_email": tc_email.strip().lower(),
+            }
             st.session_state.scan_phase = "running"
             st.session_state.scan_ctx = None
             st.session_state.scan_log = []
@@ -552,7 +663,7 @@ def _render_analysis_page(config: dict) -> None:
     if phase == "running":
         target = st.session_state.scan_domain
         st.markdown(f"**Analisi in corso per:** `{target}`")
-        _render_running_phase(config, target)
+        _render_running_phase(config, target, st.session_state.get("target_context", {}))
         return
 
     if phase == "final":

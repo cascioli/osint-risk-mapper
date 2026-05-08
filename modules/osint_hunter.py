@@ -34,6 +34,13 @@ def fetch_emails_for_domain(domain: str, api_key: str) -> list[str]:
     if response.status_code in (401, 403):
         raise ValueError("Hunter.io: API key non valida o non autorizzata.")
 
+    if response.status_code == 400:
+        # Domain not found or malformed — treat as no results, not a fatal error
+        return []
+
+    if response.status_code == 429:
+        raise RuntimeError("Hunter.io: quota mensile esaurita (429).")
+
     if response.status_code != 200:
         raise RuntimeError(
             f"Hunter.io: risposta inattesa HTTP {response.status_code}"

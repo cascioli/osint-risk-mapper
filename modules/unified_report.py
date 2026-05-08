@@ -68,17 +68,30 @@ def _build_unified_prompt(ctx: ScanContext) -> str:
 
     # Section 4: Documenti esposti
     sections.append("\n## SEZIONE 4: DOCUMENTI ESPOSTI E BRAND DORK")
+    sections.append(
+        f"IMPORTANTE: Includi nell'analisi SOLO documenti il cui URL contiene '{ctx.domain}' "
+        f"o che citano esplicitamente il dominio target. Ignora documenti di organizzazioni "
+        f"omonime o non correlate — verifica sempre che l'URL appartenga al target."
+    )
     all_docs = ctx.exposed_documents + ctx.brand_dork_results
-    sections.append(f"Documenti totali trovati: {len(all_docs)}")
+    sections.append(f"Documenti trovati (da filtrare per rilevanza): {len(all_docs)}")
     if all_docs:
         sections.append(json.dumps(all_docs[:30], ensure_ascii=False))
 
-    # Section 5: WHOIS
-    sections.append("\n## SEZIONE 5: DATI WHOIS")
+    # Section 5: WHOIS + P.IVA
+    sections.append("\n## SEZIONE 5: DATI WHOIS E P.IVA")
     if ctx.whois_data:
         sections.append(json.dumps(ctx.whois_data, ensure_ascii=False))
     else:
         sections.append("WHOIS non disponibile.")
+    if ctx.piva:
+        sections.append(f"P.IVA trovata: {ctx.piva}")
+
+    # Section 5b: Related domains
+    if ctx.related_domains:
+        sections.append("\n## SEZIONE 5b: DOMINI CORRELATI (stimati)")
+        sections.append(f"Domini potenzialmente correlati: {len(ctx.related_domains)}")
+        sections.append(json.dumps(ctx.related_domains, ensure_ascii=False))
 
     # Section 6: Sottodomini
     sections.append("\n## SEZIONE 6: SOTTODOMINI")
@@ -86,6 +99,36 @@ def _build_unified_prompt(ctx: ScanContext) -> str:
     sections.append(f"Totale sottodomini (crt.sh + VirusTotal): {len(all_subs)}")
     if all_subs:
         sections.append(json.dumps(all_subs[:50], ensure_ascii=False))
+
+    # Section 6b: Titolari/Soci (OpenCorporates)
+    if ctx.company_officers:
+        sections.append("\n## SEZIONE 6b: TITOLARI E SOCI (Registro Imprese)")
+        officers_data = [
+            {
+                "nome": o["name"],
+                "ruolo": o.get("role"),
+                "in_carica": o.get("current"),
+                "azienda": o.get("company_name"),
+            }
+            for o in ctx.company_officers
+        ]
+        sections.append(f"Persone registrate: {len(officers_data)}")
+        sections.append(json.dumps(officers_data, ensure_ascii=False))
+
+    # Section 6c: Instagram / Facebook
+    all_ig_fb = [
+        {**r, "platform": "instagram"} for r in ctx.instagram_results[:10]
+    ] + [
+        {**r, "platform": "facebook"} for r in ctx.facebook_results[:10]
+    ]
+    if all_ig_fb:
+        sections.append("\n## SEZIONE 6c: INSTAGRAM E FACEBOOK")
+        sections.append(
+            "IMPORTANTE: Questi sono risultati di ricerca Google — non profili verificati. "
+            "Indicare sempre come 'possibile profilo candidato'."
+        )
+        sections.append(f"Risultati totali Instagram/Facebook: {len(all_ig_fb)}")
+        sections.append(json.dumps(all_ig_fb, ensure_ascii=False))
 
     # Section 7: Round 3 entities
     if ctx.person_profiles or ctx.llm_followup_results:
@@ -113,17 +156,22 @@ def _build_unified_prompt(ctx: ScanContext) -> str:
         sections.append(f"\n## SEZIONE 8: TECNOLOGIE RILEVATE\n{json.dumps(tech, ensure_ascii=False)}")
 
     # Instructions
-    sections.append("""
+    sections.append(f"""
 ---
 Struttura il report con questi capitoli (usa intestazioni Markdown ##):
 1. **Executive Summary** (3-5 righe)
 2. **Livello di Rischio Complessivo** — indica [BASSO|MEDIO|ALTO|CRITICO] con motivazione
-3. **Persone Esposte** — per ogni persona trovata: ruolo stimato, presenza digitale, credenziali compromesse
-4. **Credential Exposure** — per ogni email compromessa: breach sources, tipo di dato esposto, rischio
-5. **Esposizione Documentale** — documenti pubblici trovati, rischio di data leakage
-6. **Footprint Digitale** — GitHub, Pastebin, social, menzioni web
-7. **Correlazioni Cross-Pipeline** — collega persone → email → breach → documenti → social
-8. **Raccomandazioni Prioritizzate** — usa etichette P1 (critico), P2 (alto), P3 (medio)
+3. **Soggetti Esposti** — titolari, soci e dipendenti identificati
+   - Includi persone da Registro Imprese (OpenCorporates) con ruolo ufficiale
+   - Per profili social (LinkedIn/Twitter/Instagram/Facebook): usa sempre "possibile profilo" o "profilo candidato"
+   - Non affermare appartenenza con certezza. Se più candidati, elencali come lista.
+   - Se matching basato solo sul nome senza altri segnali: ometti o scrivi "nessun profilo verificabile trovato"
+4. **Credential Exposure** — per ogni email compromessa: breach sources, tipo dato, rischio
+5. **Esposizione Documentale** — includi SOLO documenti il cui URL contiene '{ctx.domain}' o che citano esplicitamente questo dominio. Documenti di aziende omonime (stesso nome, sito diverso): ESCLUDI o marca "non correlato al target".
+6. **Footprint Digitale** — GitHub, Pastebin, Instagram, Facebook, menzioni web, P.IVA dork
+7. **Infrastruttura e Domini** — sottodomini attivi, domini correlati stimati (se presenti)
+8. **Correlazioni Cross-Pipeline** — collega persone → email → breach → documenti → social → registro
+9. **Raccomandazioni Prioritizzate** — P1 (critico), P2 (alto), P3 (medio)
 """)
 
     return "\n".join(sections)
