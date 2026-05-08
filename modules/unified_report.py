@@ -1,9 +1,8 @@
-"""Unified LLM report generator that cross-correlates all OSINT pipeline data."""
+"""Unified LLM report generator — person+data focused OSINT cross-correlation."""
 
 from __future__ import annotations
 
 import json
-from dataclasses import asdict
 
 from google import genai
 from google.genai import types as genai_types
@@ -11,94 +10,107 @@ from google.genai import types as genai_types
 from modules.scan_context import ScanContext
 
 _SYSTEM_PROMPT = (
-    "Sei un analista senior di Threat Intelligence e Red Team. "
-    "Hai ricevuto dati OSINT aggregati da fonti multiple su un dominio aziendale target. "
-    "Produci un unico report esecutivo cross-correlato in Markdown strutturato. "
-    "Il report deve identificare catene di attacco concrete che collegano email compromesse, "
-    "infrastruttura esposta, sottodomini vulnerabili e documenti sensibili. "
-    "Non inventare dati. Cita esplicitamente le correlazioni trovate tra le sezioni. "
+    "Sei un analista senior di Threat Intelligence specializzato in OSINT su persone e aziende. "
+    "Hai ricevuto dati raccolti passivamente su un target aziendale da fonti multiple. "
+    "Produci un report esecutivo focalizzato sull'esposizione di dati personali, "
+    "credenziali compromesse e footprint digitale involontario. "
+    "Non inventare dati. Cita esplicitamente solo ciò che è presente nei dati. "
     "Usa italiano."
 )
-
-
-def _summarize_host(host: dict) -> dict:
-    """Compact host representation to stay within token budget."""
-    ports = list(host.get("ports", {}).values())
-    return {
-        "ip": host.get("ip"),
-        "org": host.get("org"),
-        "country": host.get("country"),
-        "sources_ok": host.get("sources_ok", []),
-        "ports": [
-            {
-                "port": p.get("port"),
-                "service": p.get("service"),
-                "product": p.get("product"),
-                "vulns": p.get("vulns", [])[:3],
-                "leaks": [lk[:80] for lk in p.get("leaks", [])[:3]],
-            }
-            for p in ports[:20]
-        ],
-        "host_leaks": [lk[:80] for lk in host.get("host_leaks", [])[:5]],
-    }
 
 
 def _build_unified_prompt(ctx: ScanContext) -> str:
     sections: list[str] = [f"# ANALISI OSINT — TARGET: {ctx.domain}\n"]
 
-    # Section 1: Email breach
-    sections.append("## SEZIONE 1: EMAIL E BREACH")
-    sections.append(f"Email trovate (Hunter.io): {len(ctx.emails)}")
-    if ctx.breach_data:
-        sections.append(json.dumps(ctx.breach_data, ensure_ascii=False))
+    # Section 1: Persone identificate
+    sections.append("## SEZIONE 1: PERSONE IDENTIFICATE")
+    all_people = list(dict.fromkeys(
+        ctx.person_names + ctx.llm_suggested_people
+        + [pp.name for pp in ctx.person_profiles]
+    ))
+    sections.append(f"Persone trovate: {len(all_people)}")
+    if all_people:
+        sections.append(json.dumps(all_people, ensure_ascii=False))
+
+    whois_registrant = ctx.whois_data.get("registrant_name")
+    if whois_registrant:
+        sections.append(f"Registrante WHOIS: {whois_registrant}")
+        sections.append(f"Org WHOIS: {ctx.whois_data.get('registrant_org') or 'N/D'}")
+
+    # Section 2: Email e breach
+    sections.append("\n## SEZIONE 2: EMAIL E BREACH")
+    sections.append(f"Email totali trovate: {len(ctx.emails)}")
+    if ctx.breach_results:
+        breach_data = [
+            {
+                "email": r.email,
+                "hibp_breaches": r.hibp_breaches,
+                "leaklookup_sources": r.leaklookup_sources,
+                "compromessa": bool(r.hibp_breaches or r.leaklookup_sources),
+            }
+            for r in ctx.breach_results
+        ]
+        sections.append(json.dumps(breach_data, ensure_ascii=False))
     else:
         sections.append("Nessun dato breach disponibile.")
 
-    # Section 2: Network infrastructure
-    sections.append("\n## SEZIONE 2: INFRASTRUTTURA DI RETE")
-    sections.append(f"IP primario: {ctx.primary_ip or 'N/D'}")
-    if ctx.primary_host:
-        sections.append(json.dumps(_summarize_host(ctx.primary_host), ensure_ascii=False))
-    sub_hosts = [
-        {"subdomain": r.subdomain, "ip": r.ip, **_summarize_host(r.merged_host)}
-        for r in ctx.subdomain_results
-        if r.merged_host and r.merged_host.get("sources_ok")
-    ][:10]
-    if sub_hosts:
-        sections.append(f"Sottodomini con dati network ({len(sub_hosts)}):")
-        sections.append(json.dumps(sub_hosts, ensure_ascii=False))
+    # Section 3: Profili social
+    sections.append("\n## SEZIONE 3: PROFILI SOCIAL TROVATI")
+    scraped_social = [
+        {"platform": p.platform, "url": p.url, "fonte": p.source}
+        for p in ctx.social_profiles
+    ]
+    dork_social = ctx.social_dork_results[:20]
+    all_social = scraped_social + dork_social
+    sections.append(f"Profili social totali: {len(all_social)}")
+    if all_social:
+        sections.append(json.dumps(all_social, ensure_ascii=False))
 
-    # Section 3: Subdomains
-    sections.append("\n## SEZIONE 3: SOTTODOMINI (Certificate Transparency)")
-    sections.append(f"Totale sottodomini rilevati: {len(ctx.subdomains)}")
-    if ctx.subdomains:
-        sections.append(json.dumps(ctx.subdomains[:50], ensure_ascii=False))
-
-    # Section 4: Exposed documents
-    sections.append("\n## SEZIONE 4: DOCUMENTI ESPOSTI (Google Dorking)")
-    all_docs = ctx.exposed_documents + ctx.targeted_dork_results
+    # Section 4: Documenti esposti
+    sections.append("\n## SEZIONE 4: DOCUMENTI ESPOSTI E BRAND DORK")
+    all_docs = ctx.exposed_documents + ctx.brand_dork_results
     sections.append(f"Documenti totali trovati: {len(all_docs)}")
     if all_docs:
-        sections.append(json.dumps(all_docs[:20], ensure_ascii=False))
+        sections.append(json.dumps(all_docs[:30], ensure_ascii=False))
 
-    # Section 5: Email-IP correlations
-    sections.append("\n## SEZIONE 5: CORRELAZIONI EMAIL-IP")
-    correlated = [
-        {"email": c.email, "breach_sources": c.breach_sources,
-         "correlated_ips": c.correlated_ips, "matches": c.leakix_summary_matches[:3]}
-        for c in ctx.email_ip_correlations
-        if c.correlated_ips or c.breach_sources
-    ]
-    if correlated:
-        sections.append(json.dumps(correlated, ensure_ascii=False))
+    # Section 5: WHOIS
+    sections.append("\n## SEZIONE 5: DATI WHOIS")
+    if ctx.whois_data:
+        sections.append(json.dumps(ctx.whois_data, ensure_ascii=False))
     else:
-        sections.append("Nessuna correlazione diretta email-IP rilevata.")
+        sections.append("WHOIS non disponibile.")
 
-    # Section 6: Follow-up hosts from Round 3
-    if ctx.follow_up_host_results:
-        sections.append("\n## SEZIONE 6: ENTITÀ AGGIUNTIVE (Round 3 LLM-guided)")
-        follow_up = [_summarize_host(h) for h in ctx.follow_up_host_results[:5]]
-        sections.append(json.dumps(follow_up, ensure_ascii=False))
+    # Section 6: Sottodomini
+    sections.append("\n## SEZIONE 6: SOTTODOMINI")
+    all_subs = list(dict.fromkeys(ctx.subdomains + ctx.vt_subdomains))
+    sections.append(f"Totale sottodomini (crt.sh + VirusTotal): {len(all_subs)}")
+    if all_subs:
+        sections.append(json.dumps(all_subs[:50], ensure_ascii=False))
+
+    # Section 7: Round 3 entities
+    if ctx.person_profiles or ctx.llm_followup_results:
+        sections.append("\n## SEZIONE 7: ENTITÀ AGGIUNTIVE (Round 3 LLM-guided)")
+        if ctx.person_profiles:
+            pp_data = [
+                {
+                    "nome": pp.name,
+                    "linkedin_results": len(pp.linkedin_results),
+                    "twitter_results": len(pp.twitter_results),
+                    "linkedin_urls": [r.get("url") for r in pp.linkedin_results[:3]],
+                    "twitter_urls": [r.get("url") for r in pp.twitter_results[:3]],
+                }
+                for pp in ctx.person_profiles
+            ]
+            sections.append(f"Persone aggiuntive investigate: {len(pp_data)}")
+            sections.append(json.dumps(pp_data, ensure_ascii=False))
+        if ctx.llm_followup_results:
+            sections.append(f"Risultati query aggiuntive: {len(ctx.llm_followup_results)}")
+            sections.append(json.dumps(ctx.llm_followup_results[:10], ensure_ascii=False))
+
+    # Tech hints
+    tech = ctx.scraped_contacts.get("tech_hints", [])
+    if tech:
+        sections.append(f"\n## SEZIONE 8: TECNOLOGIE RILEVATE\n{json.dumps(tech, ensure_ascii=False)}")
 
     # Instructions
     sections.append("""
@@ -106,15 +118,12 @@ def _build_unified_prompt(ctx: ScanContext) -> str:
 Struttura il report con questi capitoli (usa intestazioni Markdown ##):
 1. **Executive Summary** (3-5 righe)
 2. **Livello di Rischio Complessivo** — indica [BASSO|MEDIO|ALTO|CRITICO] con motivazione
-3. **Catene di Attacco Identificate** — formato: `Email compromessa → Breach → IP esposto → Servizio vulnerabile → Impatto`
-4. **Analisi per Dominio di Rischio**:
-   - Credential Exposure
-   - Network Exposure
-   - Data Leakage (documenti)
-   - Sottodomini dimenticati/ambienti di test
-5. **Correlazioni Cross-Pipeline** (la sezione più importante — collega email, IP, breach, documenti)
-6. **Entità Correlate di Terze Parti** (se presenti dati Round 3)
-7. **Raccomandazioni Prioritizzate** — usa etichette P1 (critico), P2 (alto), P3 (medio)
+3. **Persone Esposte** — per ogni persona trovata: ruolo stimato, presenza digitale, credenziali compromesse
+4. **Credential Exposure** — per ogni email compromessa: breach sources, tipo di dato esposto, rischio
+5. **Esposizione Documentale** — documenti pubblici trovati, rischio di data leakage
+6. **Footprint Digitale** — GitHub, Pastebin, social, menzioni web
+7. **Correlazioni Cross-Pipeline** — collega persone → email → breach → documenti → social
+8. **Raccomandazioni Prioritizzate** — usa etichette P1 (critico), P2 (alto), P3 (medio)
 """)
 
     return "\n".join(sections)

@@ -1,4 +1,4 @@
-"""Connection graph builder and Plotly renderer for OSINT scan results."""
+"""Connection graph builder and Plotly renderer for OSINT scan results — person+data model."""
 
 from __future__ import annotations
 
@@ -10,22 +10,22 @@ from modules.scan_context import ScanContext
 
 _NODE_COLORS: dict[str, str] = {
     "domain":    "#00d4ff",
-    "ip":        "#7b00ff",
+    "person":    "#ff8c00",
     "subdomain": "#0080ff",
-    "email":     "#ff8c00",
-    "port":      "#ff006e",
+    "email":     "#ffaa00",
     "breach":    "#ff0000",
     "document":  "#ffff00",
+    "social":    "#00ff88",
 }
 
 _NODE_SIZES: dict[str, int] = {
     "domain":    24,
-    "ip":        18,
-    "subdomain": 12,
+    "person":    18,
+    "subdomain": 10,
     "email":     14,
-    "port":       8,
     "breach":    12,
     "document":  10,
+    "social":    12,
 }
 
 
@@ -52,99 +52,67 @@ def build_graph_data(ctx: ScanContext) -> dict:
     domain_id = f"domain:{ctx.domain}"
     add_node(domain_id, ctx.domain, "domain")
 
-    # Primary IP
-    if ctx.primary_ip:
-        ip_id = f"ip:{ctx.primary_ip}"
-        host = ctx.primary_host or {}
-        add_node(ip_id, ctx.primary_ip, "ip", {
-            "org": host.get("org", ""),
-            "country": host.get("country", ""),
-            "sources": host.get("sources_ok", []),
-        })
-        add_edge(domain_id, ip_id, "resolves_to")
-
-        # Ports on primary IP
-        for port_info in host.get("ports", {}).values():
-            port_num = port_info.get("port", 0)
-            svc = port_info.get("service") or port_info.get("product") or str(port_num)
-            port_id = f"port:{ctx.primary_ip}:{port_num}"
-            add_node(port_id, f":{port_num} {svc}", "port", {
-                "vulns": port_info.get("vulns", [])[:3],
-                "leaks": port_info.get("leaks", [])[:2],
-            })
-            add_edge(ip_id, port_id, "exposes_port")
-
-    # Subdomains
-    for result in ctx.subdomain_results:
-        sub_id = f"subdomain:{result.subdomain}"
-        add_node(sub_id, result.subdomain, "subdomain")
-        add_edge(domain_id, sub_id, "has_subdomain")
-
-        if result.ip:
-            ip_id = f"ip:{result.ip}"
-            host = result.merged_host or {}
-            if result.merged_host:
-                add_node(ip_id, result.ip, "ip", {
-                    "org": host.get("org", ""),
-                    "country": host.get("country", ""),
-                    "sources": host.get("sources_ok", []),
-                })
-                add_edge(sub_id, ip_id, "resolves_to")
-
-                for port_info in host.get("ports", {}).values():
-                    port_num = port_info.get("port", 0)
-                    svc = port_info.get("service") or port_info.get("product") or str(port_num)
-                    port_id = f"port:{result.ip}:{port_num}"
-                    add_node(port_id, f":{port_num} {svc}", "port", {
-                        "vulns": port_info.get("vulns", [])[:3],
-                        "leaks": port_info.get("leaks", [])[:2],
-                    })
-                    add_edge(ip_id, port_id, "exposes_port")
-            else:
-                # Same IP as another host — just link subdomain to existing IP node
-                if ip_id in nodes:
-                    add_edge(sub_id, ip_id, "resolves_to")
+    # People (from scraping, WHOIS, Round 3)
+    all_people = list(dict.fromkeys(
+        ctx.person_names + ctx.llm_suggested_people
+        + [pp.name for pp in ctx.person_profiles]
+    ))
+    for name in all_people:
+        person_id = f"person:{name}"
+        add_node(person_id, name, "person")
+        add_edge(domain_id, person_id, "has_person")
 
     # Emails and breaches
-    for email, breach_sources in ctx.breach_data.items():
-        email_id = f"email:{email}"
-        add_node(email_id, email, "email")
+    for result in ctx.breach_results:
+        email_id = f"email:{result.email}"
+        add_node(email_id, result.email, "email")
         add_edge(domain_id, email_id, "has_email")
 
-        for src in breach_sources:
-            breach_id = f"breach:{src}"
-            add_node(breach_id, src, "breach")
+        for breach in dict.fromkeys(result.hibp_breaches + result.leaklookup_sources):
+            breach_id = f"breach:{breach}"
+            add_node(breach_id, breach, "breach")
             add_edge(email_id, breach_id, "breached_in")
 
-    # Email-IP correlations
-    for corr in ctx.email_ip_correlations:
-        email_id = f"email:{corr.email}"
-        for ip in corr.correlated_ips:
-            ip_id = f"ip:{ip}"
-            if email_id in nodes and ip_id in nodes:
-                add_edge(email_id, ip_id, "correlated_with", weight=0.5)
+    # Emails without breach data (just discovered)
+    for email in ctx.emails:
+        email_id = f"email:{email}"
+        if email_id not in nodes:
+            add_node(email_id, email, "email")
+            add_edge(domain_id, email_id, "has_email")
 
-    # Exposed documents
-    all_docs = ctx.exposed_documents + ctx.targeted_dork_results
-    for i, doc in enumerate(all_docs[:20]):
+    # Social profiles (scraped)
+    for sp in ctx.social_profiles:
+        soc_id = f"social:scraped:{sp.platform}:{sp.url[:40]}"
+        label = f"{sp.platform}: {sp.url[sp.url.rfind('/')+1:][:25] or sp.platform}"
+        add_node(soc_id, label, "social", {"url": sp.url, "platform": sp.platform})
+        add_edge(domain_id, soc_id, "has_social")
+
+    # Person profiles with their social dork results (Round 3)
+    for pp in ctx.person_profiles:
+        person_id = f"person:{pp.name}"
+        if person_id not in nodes:
+            add_node(person_id, pp.name, "person")
+            add_edge(domain_id, person_id, "has_person")
+        for item in (pp.linkedin_results + pp.twitter_results)[:5]:
+            url = item.get("url", "")
+            soc_id = f"social:dork:{url[:40]}"
+            add_node(soc_id, item.get("title", "Profile")[:30], "social", {"url": url})
+            add_edge(person_id, soc_id, "found_on")
+
+    # Documents (exposed + brand dork + follow-up)
+    all_docs = ctx.exposed_documents + ctx.brand_dork_results + ctx.llm_followup_results
+    for i, doc in enumerate(all_docs[:25]):
         doc_id = f"document:{i}:{doc.get('url', '')[:40]}"
         title = (doc.get("title") or "Document")[:40]
         add_node(doc_id, title, "document", {"url": doc.get("url", "")})
         add_edge(domain_id, doc_id, "has_document")
 
-    # Follow-up hosts from Round 3
-    for host in ctx.follow_up_host_results:
-        ip = host.get("ip", "")
-        if not ip:
-            continue
-        ip_id = f"ip:{ip}"
-        add_node(ip_id, ip, "ip", {
-            "org": host.get("org", ""),
-            "country": host.get("country", ""),
-            "sources": host.get("sources_ok", []),
-            "note": "Round 3 entity",
-        })
-        add_edge(domain_id, ip_id, "suggests", weight=0.5)
+    # Subdomains
+    all_subs = list(dict.fromkeys(ctx.subdomains + ctx.vt_subdomains))
+    for sub in all_subs[:30]:
+        sub_id = f"subdomain:{sub}"
+        add_node(sub_id, sub, "subdomain")
+        add_edge(domain_id, sub_id, "has_subdomain")
 
     return {"nodes": list(nodes.values()), "edges": edges}
 
@@ -167,7 +135,7 @@ def _compute_layout(nodes: list[dict], edges: list[dict]) -> dict[str, tuple[flo
         pass
 
     # Fallback: circular layout grouped by node type
-    type_order = ["domain", "ip", "subdomain", "email", "breach", "port", "document"]
+    type_order = ["domain", "person", "email", "breach", "social", "document", "subdomain"]
     grouped: dict[str, list[str]] = {t: [] for t in type_order}
     for node in nodes:
         grouped.setdefault(node["type"], []).append(node["id"])
@@ -203,7 +171,7 @@ def render_connection_graph(graph_data: dict) -> go.Figure:
 
     positions = _compute_layout(nodes, edges)
 
-    # Build edge traces
+    # Edge traces
     edge_x: list[float | None] = []
     edge_y: list[float | None] = []
     for edge in edges:
@@ -222,16 +190,15 @@ def render_connection_graph(graph_data: dict) -> go.Figure:
         showlegend=False,
     )
 
-    # Build one scatter trace per node type for legend grouping
-    type_order = ["domain", "ip", "subdomain", "email", "breach", "port", "document"]
+    type_order = ["domain", "person", "email", "breach", "social", "document", "subdomain"]
     type_labels = {
-        "domain": "Dominio",
-        "ip": "IP",
+        "domain":    "Dominio",
+        "person":    "Persona",
+        "email":     "Email",
+        "breach":    "Breach",
+        "social":    "Profilo Social",
+        "document":  "Documento",
         "subdomain": "Sottodominio",
-        "email": "Email",
-        "breach": "Breach",
-        "port": "Porta/Servizio",
-        "document": "Documento",
     }
 
     grouped: dict[str, list[dict]] = {t: [] for t in type_order}

@@ -10,10 +10,8 @@ load_dotenv()
 _KEYS = [
     "HUNTER_API_KEY",
     "LEAKLOOKUP_API_KEY",
-    "ZOOMEYE_API_KEY",
-    "CENSYS_API_ID",
-    "CENSYS_API_SECRET",
-    "LEAKIX_API_KEY",
+    "VIRUSTOTAL_API_KEY",
+    "HIBP_API_KEY",
     "GEMINI_API_KEY",
     "SERPER_API_KEY",
     "SERPAPI_KEY",

@@ -98,6 +98,80 @@ def search_by_query(
     return []
 
 
+def search_linkedin_profiles(
+    name: str,
+    company: str,
+    api_key: str,
+    fallback_key: str = "",
+    num_results: int = 5,
+) -> list[dict[str, str]]:
+    """Search for LinkedIn profiles matching a person name and company."""
+    if not name:
+        return []
+    query = f'site:linkedin.com "{name}"'
+    if company:
+        query += f' "{company}"'
+    return search_by_query(query, api_key, num_results, fallback_key)
+
+
+def search_twitter_presence(
+    company: str,
+    api_key: str,
+    fallback_key: str = "",
+    num_results: int = 5,
+) -> list[dict[str, str]]:
+    """Search for Twitter/X presence for a company."""
+    if not company:
+        return []
+    query = f'site:twitter.com "{company}" OR site:x.com "{company}"'
+    return search_by_query(query, api_key, num_results, fallback_key)
+
+
+def search_github_mentions(
+    domain: str,
+    company: str,
+    api_key: str,
+    fallback_key: str = "",
+    num_results: int = 10,
+) -> list[dict[str, str]]:
+    """Search GitHub for leaked code, configs, or credentials mentioning this domain/company."""
+    parts = []
+    if domain:
+        parts.append(f'"{domain}"')
+    if company and company.lower() not in domain.lower():
+        parts.append(f'"{company}"')
+    if not parts:
+        return []
+    query = f"site:github.com {' OR '.join(parts)}"
+    return search_by_query(query, api_key, num_results, fallback_key)
+
+
+def search_pastebin_mentions(
+    domain: str,
+    api_key: str,
+    fallback_key: str = "",
+    num_results: int = 10,
+) -> list[dict[str, str]]:
+    """Search Pastebin for leaks mentioning this domain."""
+    if not domain:
+        return []
+    query = f'site:pastebin.com "{domain}"'
+    return search_by_query(query, api_key, num_results, fallback_key)
+
+
+def search_brand_documents(
+    company: str,
+    api_key: str,
+    fallback_key: str = "",
+    num_results: int = 10,
+) -> list[dict[str, str]]:
+    """Search for publicly indexed documents mentioning the company name."""
+    if not company:
+        return []
+    query = f'"{company}" filetype:pdf OR filetype:doc OR filetype:xls OR filetype:xlsx'
+    return search_by_query(query, api_key, num_results, fallback_key)
+
+
 def search_exposed_documents(
     domain: str,
     api_key: str,
