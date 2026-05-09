@@ -17,6 +17,7 @@ from modules.agent.system_prompt import AGENT_SYSTEM_PROMPT
 from modules.agent.tool_executor import execute_tool
 from modules.agent.tool_registry import TOOL_SERVICE_MAP, get_tool_declarations, make_call_key
 from modules.scan_context import ScanContext
+from modules.token_logger import log_llm_call
 
 LogFn = Callable[[str], None]
 ProgressFn = Callable[[float], None]
@@ -193,6 +194,14 @@ def run_agent_loop(
             budget.record("gemini")
             if model_used != ctx.config.get("model_name", "gemini-2.5-flash"):
                 log_fn(f"[{_ts()}] [agent] Usato modello fallback: {model_used}")
+            _usage = getattr(response, "usage_metadata", None)
+            log_llm_call(
+                call_site="gemini_agent_loop",
+                model=model_used,
+                input_tokens=getattr(_usage, "prompt_token_count", 0),
+                output_tokens=getattr(_usage, "candidates_token_count", 0),
+                target=ctx.domain or ctx.target_context.get("company_name", "unknown"),
+            )
         except Exception as exc:
             log_fn(f"[{_ts()}] [agent] Errore Gemini: {exc}")
             break

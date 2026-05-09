@@ -75,13 +75,18 @@ def build_context_summary(
         ad = ctx.atoka_data
         atoka_summary = f"  atoka: {ad.get('name','')} | {ad.get('sede','')} | ATECO={ad.get('ateco','')}"
 
+    piva_hint = ctx.target_context.get("piva_hint", "")
+    email_hint = ctx.target_context.get("contact_email", "")
+
     return f"""=== OSINT AGENT CONTEXT — iterazione {iteration} ===
 
 TARGET
-  domain: {ctx.domain}
+  domain: {ctx.domain if ctx.domain else "NON ANCORA NOTO"}
   company: {ctx.target_context.get("company_name") or "sconosciuto"}
   city: {ctx.target_context.get("city") or ""}
   sector: {ctx.gemini_guidance.get("sector") or "sconosciuto"}
+  piva_hint: {piva_hint or "—"}
+  email_hint: {email_hint or "—"}
 
 DISCOVERY
   emails_trovate: {len(ctx.emails)} — campione: {emails_sample}

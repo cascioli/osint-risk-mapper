@@ -15,6 +15,7 @@ from google import genai
 from google.genai import types as genai_types
 
 from modules.scan_context import ScanContext
+from modules.token_logger import log_llm_call
 
 _SYSTEM = (
     "Sei un analista OSINT specializzato in aziende italiane. "
@@ -96,6 +97,14 @@ def run_gemini_guidance(
                 temperature=0.1,
                 response_mime_type="application/json",
             ),
+        )
+        usage = response.usage_metadata
+        log_llm_call(
+            call_site="gemini_guidance",
+            model=model_name,
+            input_tokens=getattr(usage, "prompt_token_count", 0),
+            output_tokens=getattr(usage, "candidates_token_count", 0),
+            target=ctx.domain or company,
         )
         raw = response.text.strip()
         if raw.startswith("```"):

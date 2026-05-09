@@ -68,7 +68,11 @@ def _dispatch(
 
     if tool_name == "scrape_domain":
         from modules.web_scraper import scrape_domain
-        domain = args.get("domain", ctx.domain)
+        domain = args.get("domain") or ctx.domain
+        if not domain:
+            return {"error": "domain non ancora noto — scoprilo prima con atoka/dork/email", "summary": "skip: domain unknown"}
+        if ctx.domain is None:
+            ctx.domain = domain
         result = _with_retry(lambda: scrape_domain(domain)) or {}
         new_emails = [e for e in result.get("emails", []) if e not in ctx.emails]
         ctx.emails = list(dict.fromkeys(ctx.emails + new_emails))
@@ -90,7 +94,11 @@ def _dispatch(
 
     if tool_name == "fetch_whois":
         from modules.whois_client import fetch_whois
-        domain = args.get("domain", ctx.domain)
+        domain = args.get("domain") or ctx.domain
+        if not domain:
+            return {"error": "domain non ancora noto — scoprilo prima con atoka/dork/email", "summary": "skip: domain unknown"}
+        if ctx.domain is None:
+            ctx.domain = domain
         result = _with_retry(lambda: fetch_whois(domain)) or {}
         ctx.whois_data = result
         registrant = result.get("registrant_name") or result.get("registrant_org") or "n/d"
@@ -101,7 +109,11 @@ def _dispatch(
 
     if tool_name == "get_subdomains":
         from modules.osint_subdomains import get_subdomains
-        domain = args.get("domain", ctx.domain)
+        domain = args.get("domain") or ctx.domain
+        if not domain:
+            return {"error": "domain non ancora noto — scoprilo prima con atoka/dork/email", "summary": "skip: domain unknown"}
+        if ctx.domain is None:
+            ctx.domain = domain
         result = _with_retry(lambda: get_subdomains(domain)) or []
         new_subs = [s for s in result if s not in ctx.subdomains]
         ctx.subdomains = list(dict.fromkeys(ctx.subdomains + new_subs))
@@ -110,7 +122,11 @@ def _dispatch(
 
     if tool_name == "fetch_emails_phonebook":
         from modules.phonebook_client import fetch_emails_phonebook
-        domain = args.get("domain", ctx.domain)
+        domain = args.get("domain") or ctx.domain
+        if not domain:
+            return {"error": "domain non ancora noto — scoprilo prima con atoka/dork/email", "summary": "skip: domain unknown"}
+        if ctx.domain is None:
+            ctx.domain = domain
         result = _with_retry(lambda: fetch_emails_phonebook(domain)) or []
         new_emails = [e for e in result if e not in ctx.emails]
         ctx.emails = list(dict.fromkeys(ctx.emails + new_emails))
@@ -122,7 +138,11 @@ def _dispatch(
 
     if tool_name == "fetch_vt_subdomains":
         from modules.vt_client import fetch_vt_subdomains
-        domain = args.get("domain", ctx.domain)
+        domain = args.get("domain") or ctx.domain
+        if not domain:
+            return {"error": "domain non ancora noto — scoprilo prima con atoka/dork/email", "summary": "skip: domain unknown"}
+        if ctx.domain is None:
+            ctx.domain = domain
         vt_key = cfg.get("vt_key", "")
         if not vt_key:
             return {"error": "vt_key mancante", "summary": "skip: no vt_key"}
@@ -135,7 +155,11 @@ def _dispatch(
 
     if tool_name == "fetch_emails_hunter":
         from modules.osint_hunter import fetch_emails_for_domain
-        domain = args.get("domain", ctx.domain)
+        domain = args.get("domain") or ctx.domain
+        if not domain:
+            return {"error": "domain non ancora noto — scoprilo prima con atoka/dork/email", "summary": "skip: domain unknown"}
+        if ctx.domain is None:
+            ctx.domain = domain
         hunter_key = cfg.get("hunter_key", "")
         if not hunter_key:
             return {"error": "hunter_key mancante", "summary": "skip: no hunter_key"}
@@ -276,7 +300,9 @@ def _dispatch(
 
     if tool_name == "search_github_mentions":
         from modules.osint_dorking import search_github_mentions
-        domain = args.get("domain", ctx.domain)
+        domain = args.get("domain") or ctx.domain
+        if not domain:
+            return {"error": "domain non ancora noto", "summary": "skip: domain unknown"}
         company = args.get("company", "")
         serper_key = cfg.get("serper_key", "")
         serpapi_key = cfg.get("serpapi_key", "")
@@ -290,7 +316,9 @@ def _dispatch(
 
     if tool_name == "search_pastebin_mentions":
         from modules.osint_dorking import search_pastebin_mentions
-        domain = args.get("domain", ctx.domain)
+        domain = args.get("domain") or ctx.domain
+        if not domain:
+            return {"error": "domain non ancora noto", "summary": "skip: domain unknown"}
         serper_key = cfg.get("serper_key", "")
         serpapi_key = cfg.get("serpapi_key", "")
         if not (serper_key or serpapi_key):
@@ -303,7 +331,9 @@ def _dispatch(
 
     if tool_name == "search_brand_documents":
         from modules.osint_dorking import search_brand_documents
-        domain = args.get("domain", ctx.domain)
+        domain = args.get("domain") or ctx.domain
+        if not domain:
+            return {"error": "domain non ancora noto", "summary": "skip: domain unknown"}
         company = args.get("company", "")
         serper_key = cfg.get("serper_key", "")
         serpapi_key = cfg.get("serpapi_key", "")
@@ -332,7 +362,9 @@ def _dispatch(
 
     if tool_name == "search_email_pattern_external":
         from modules.osint_dorking import search_email_pattern_external
-        domain = args.get("domain", ctx.domain)
+        domain = args.get("domain") or ctx.domain
+        if not domain:
+            return {"error": "domain non ancora noto", "summary": "skip: domain unknown"}
         serper_key = cfg.get("serper_key", "")
         serpapi_key = cfg.get("serpapi_key", "")
         if not (serper_key or serpapi_key):

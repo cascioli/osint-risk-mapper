@@ -1,12 +1,7 @@
 """OSINT Risk Mapper — entry point.
 
-Passive Threat Intelligence tool for corporate domains. Person+data focused pipeline:
-  Round 1 — web scrape, WHOIS, subdomains, email discovery, exposed docs
-  Round 2 — breach check (HIBP + Leak-Lookup), social dork, GitHub/Pastebin dork
-  Round 3 — LLM-guided: suggests additional people + queries, executes follow-ups
-  Final   — unified cross-correlated report + connection graph
-
-No active scanning — all data comes from pre-indexed public sources.
+Passive Threat Intelligence tool for Italian corporate targets. AI agent mode only.
+No active scanning — all data from pre-indexed public sources.
 
 Usage:
     streamlit run app.py
@@ -23,7 +18,6 @@ import streamlit as st
 
 from modules.dashboard_map import generate_mock_province_data, render_heatmap
 from modules.graph_builder import render_connection_graph
-from modules.orchestrator import run_final, run_round1, run_round1_5, run_round2, run_round3
 from modules.scan_context import ScanContext
 from utils.config import get_api_keys
 
@@ -68,27 +62,9 @@ def _render_sidebar(env: dict[str, str]) -> dict:
         _status("IntelX Leaked DB", bool(env["INTELX_API_KEY"]))
         st.markdown("---")
 
-        st.header("⚙️ Impostazioni Analisi")
-        max_people = st.slider(
-            "Max persone per social dork (Round 2)",
-            min_value=1, max_value=10, value=5, step=1,
-            key="max_people_dork",
-            help="Numero massimo di persone identificate per cui eseguire il dork LinkedIn/Twitter.",
-        )
-        st.caption("Subdomain Enumeration (crt.sh) sempre attivo — nessuna key richiesta.")
-
-        st.markdown("---")
-        st.header("🤖 Modalità Agente")
+        st.header("🤖 Agente AI")
         _has_gemini = bool(env["GEMINI_API_KEY"])
         _has_openai = bool(env["OPENAI_API_KEY"])
-        _agent_available = _has_gemini or _has_openai
-        use_agent = st.toggle(
-            "Agente AI adattivo",
-            value=_agent_available,
-            key="use_agent_mode",
-            help="Sostituisce la pipeline fissa con un agente AI che decide autonomamente quali tool chiamare.",
-            disabled=not _agent_available,
-        )
         _provider_options = []
         if _has_gemini:
             _provider_options.append("Gemini (gemini-2.5-flash)")
@@ -97,30 +73,24 @@ def _render_sidebar(env: dict[str, str]) -> dict:
         if not _provider_options:
             _provider_options = ["Gemini (gemini-2.5-flash)"]
         agent_provider_label = st.radio(
-            "Provider AI agente",
+            "Provider AI",
             _provider_options,
             key="agent_provider",
-            disabled=not use_agent,
         )
         agent_provider = "openai" if "OpenAI" in (agent_provider_label or "") else "gemini"
         max_iterations = st.slider(
-            "Max iterazioni agente",
+            "Max iterazioni",
             min_value=5, max_value=50, value=30, step=5,
             key="agent_max_iterations",
             help="Limite massimo di turni AI. Ogni turno = 1 tool call.",
-            disabled=not use_agent,
         )
         max_serper = st.slider(
             "Max chiamate Serper (dorking)",
             min_value=5, max_value=80, value=40, step=5,
             key="agent_max_serper",
             help="Budget massimo per le chiamate Google dorking via Serper/SerpAPI.",
-            disabled=not use_agent,
         )
-        if use_agent:
-            st.caption("Pipeline classica disponibile disattivando il toggle.")
-        else:
-            st.caption("Pipeline classica attiva (5 round fissi).")
+        st.caption("Subdomain Enumeration (crt.sh) sempre attivo — nessuna key richiesta.")
 
     _ai_key = env["OPENAI_API_KEY"] if agent_provider == "openai" else env["GEMINI_API_KEY"]
     _model_name = "gpt-4o-mini" if agent_provider == "openai" else _GEMINI_MODEL
@@ -138,8 +108,10 @@ def _render_sidebar(env: dict[str, str]) -> dict:
         "serper_key": env["SERPER_API_KEY"],
         "serpapi_key": env["SERPAPI_KEY"],
         "opencorporates_key": env["OPENCORPORATES_API_KEY"],
-        "max_people_dork": max_people,
-        "use_agent": use_agent,
+        "atoka_key": env["ATOKA_API_KEY"],
+        "dehashed_key": env["DEHASHED_API_KEY"],
+        "dehashed_email": env["DEHASHED_EMAIL"],
+        "intelx_key": env["INTELX_API_KEY"],
         "agent_max_iterations": max_iterations,
         "agent_max_serper_calls": max_serper,
     }
@@ -209,7 +181,8 @@ def _render_idle_welcome() -> None:
 
 
 def _render_running_phase(config: dict, domain: str, target_context: dict) -> None:
-    ctx = ScanContext(domain=domain, config=config, target_context=target_context)
+    # Empty domain → None so agent discovers it autonomously
+    ctx = ScanContext(domain=domain or None, config=config, target_context=target_context)
     st.session_state.scan_log = []
     LOG_MAX = 40
 
@@ -224,25 +197,20 @@ def _render_running_phase(config: dict, domain: str, target_context: dict) -> No
     def progress_fn(val: float) -> None:
         progress_bar.progress(val, text=f"Analisi in corso... {int(val * 100)}%")
 
-    max_people = config.get("max_people_dork", 5)
-    if config.get("use_agent") and config.get("ai_key"):
-        from modules.agent.budget_tracker import BudgetConfig
-        budget_cfg = BudgetConfig(
-            max_iterations=config.get("agent_max_iterations", 30),
-            max_serper_calls=config.get("agent_max_serper_calls", 40),
-        )
-        if config.get("provider") == "openai":
-            from modules.agent.openai_loop import run_openai_agent_loop
-            ctx = run_openai_agent_loop(ctx, budget_config=budget_cfg, log_fn=log_fn, progress_fn=progress_fn)
-        else:
-            from modules.agent.loop import run_agent_loop
-            ctx = run_agent_loop(ctx, budget_config=budget_cfg, log_fn=log_fn, progress_fn=progress_fn)
+    if not config.get("ai_key"):
+        st.error("❌ Nessuna API key AI configurata. Imposta GEMINI_API_KEY o OPENAI_API_KEY nel file .env.")
+        return
+    from modules.agent.budget_tracker import BudgetConfig
+    budget_cfg = BudgetConfig(
+        max_iterations=config.get("agent_max_iterations", 30),
+        max_serper_calls=config.get("agent_max_serper_calls", 40),
+    )
+    if config.get("provider") == "openai":
+        from modules.agent.openai_loop import run_openai_agent_loop
+        ctx = run_openai_agent_loop(ctx, budget_config=budget_cfg, log_fn=log_fn, progress_fn=progress_fn)
     else:
-        ctx = run_round1(ctx, log_fn=log_fn, progress_fn=progress_fn)
-        ctx = run_round1_5(ctx, log_fn=log_fn, progress_fn=progress_fn)
-        ctx = run_round2(ctx, max_people=max_people, log_fn=log_fn, progress_fn=progress_fn)
-        ctx = run_round3(ctx, log_fn=log_fn, progress_fn=progress_fn)
-        ctx = run_final(ctx, log_fn=log_fn, progress_fn=progress_fn)
+        from modules.agent.loop import run_agent_loop
+        ctx = run_agent_loop(ctx, budget_config=budget_cfg, log_fn=log_fn, progress_fn=progress_fn)
 
     st.session_state.scan_ctx = ctx
     st.session_state.scan_phase = "final"
@@ -313,8 +281,9 @@ def _build_report_md(ctx: ScanContext) -> str:
     n_breached = sum(1 for r in ctx.breach_results if r.hibp_breaches or r.leaklookup_sources)
     all_docs = ctx.exposed_documents + ctx.brand_dork_results + ctx.llm_followup_results
 
+    _target_label = ctx.domain or ctx.target_context.get("company_name") or "target"
     lines = [
-        f"# OSINT Risk Mapper — {ctx.domain}",
+        f"# OSINT Risk Mapper — {_target_label}",
         f"Generato: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}",
         "",
         "## Riepilogo",
@@ -337,7 +306,8 @@ def _build_report_md(ctx: ScanContext) -> str:
 
 
 def _render_final_phase(ctx: ScanContext) -> None:
-    st.success(f"✅ Analisi completata per **{ctx.domain}**")
+    _target_label = ctx.domain or ctx.target_context.get("company_name") or "target"
+    st.success(f"✅ Analisi completata per **{_target_label}**")
 
     all_people = list(dict.fromkeys(
         ctx.person_names + ctx.llm_suggested_people
@@ -359,13 +329,13 @@ def _render_final_phase(ctx: ScanContext) -> None:
     with col_csv:
         st.download_button(
             "⬇️ Scarica CSV (ZIP)", data=_build_csv_zip(ctx),
-            file_name=f"osint_{ctx.domain}_{date_str}.zip",
+            file_name=f"osint_{_target_label}_{date_str}.zip",
             mime="application/zip", use_container_width=True,
         )
     with col_md:
         st.download_button(
             "⬇️ Scarica Report (Markdown)", data=_build_report_md(ctx),
-            file_name=f"osint_report_{ctx.domain}_{date_str}.md",
+            file_name=f"osint_report_{_target_label}_{date_str}.md",
             mime="text/markdown", use_container_width=True,
         )
 
@@ -647,8 +617,8 @@ def _render_analysis_page(config: dict) -> None:
         with col_input:
             domain: str = st.text_input(
                 "Dominio target",
-                placeholder="es: azienda.it",
-                help="Nome a dominio da analizzare (senza http://)",
+                placeholder="es: azienda.it — lascia vuoto se non noto",
+                help="Nome a dominio (senza http://). Lascia vuoto se non noto: puoi usare nome azienda, P.IVA o email.",
                 label_visibility="collapsed",
                 key="domain_input",
             )
@@ -657,7 +627,7 @@ def _render_analysis_page(config: dict) -> None:
         if st.session_state.scan_count > 0:
             st.caption(f"Analisi questa sessione: {st.session_state.scan_count}/{_MAX_SCANS_PER_SESSION}")
 
-        with st.expander("📋 Informazioni aggiuntive sul target (raccomandato)", expanded=False):
+        with st.expander("📋 Informazioni aggiuntive — P.IVA / email / nome richiesti se senza dominio", expanded=not domain.strip()):
             st.caption(
                 "Fornisci contesto per migliorare la qualità dei risultati. "
                 "Tutti i campi sono opzionali — anche poche informazioni aiutano."
@@ -675,7 +645,7 @@ def _render_analysis_page(config: dict) -> None:
                 height=80,
                 help="Nomi di persone associate all'azienda. Accelera la ricerca social.",
             )
-            col_city, col_email = st.columns(2)
+            col_city, col_piva = st.columns(2)
             with col_city:
                 tc_city = st.text_input(
                     "Città / Regione",
@@ -683,13 +653,19 @@ def _render_analysis_page(config: dict) -> None:
                     key="tc_city",
                     help="Aiuta a filtrare risultati geograficamente non pertinenti.",
                 )
-            with col_email:
-                tc_email = st.text_input(
-                    "Email di contatto nota",
-                    placeholder="es. info@azienda.it",
-                    key="tc_email",
-                    help="Se già conosci un'email aziendale, aggiungila per il breach check.",
+            with col_piva:
+                tc_piva = st.text_input(
+                    "P.IVA conosciuta",
+                    placeholder="es. 01234567890",
+                    key="tc_piva",
+                    help="Partita IVA italiana. L'agente la usa per trovare il dominio via Atoka/registro imprese.",
                 )
+            tc_email = st.text_input(
+                "Email / PEC di contatto nota",
+                placeholder="es. info@azienda.it oppure azienda@pec.it",
+                key="tc_email",
+                help="Email o PEC aziendale. L'agente può estrarre il dominio dall'indirizzo email.",
+            )
 
         if analyze_btn:
             if st.session_state.scan_count >= _MAX_SCANS_PER_SESSION:
@@ -704,20 +680,27 @@ def _render_analysis_page(config: dict) -> None:
                 .removeprefix("http://")
                 .rstrip("/")
             )
-            if not domain_clean:
-                st.error("❌ Inserisci un nome a dominio prima di procedere.")
-                return
             # Parse owner names (one per line)
             owner_names = [
                 n.strip() for n in tc_owners_raw.splitlines()
                 if n.strip()
             ] if tc_owners_raw else []
 
+            piva_clean = tc_piva.strip() if tc_piva else ""
+
+            has_identifier = bool(
+                domain_clean or tc_company.strip() or piva_clean or tc_email.strip()
+            )
+            if not has_identifier:
+                st.error("❌ Fornisci almeno un identificatore: dominio, nome azienda, P.IVA o email.")
+                return
+
             st.session_state.target_context = {
                 "company_name": tc_company.strip(),
                 "owner_names": owner_names,
                 "city": tc_city.strip(),
                 "contact_email": tc_email.strip().lower(),
+                "piva_hint": piva_clean,
             }
             st.session_state.scan_phase = "running"
             st.session_state.scan_ctx = None
@@ -732,8 +715,10 @@ def _render_analysis_page(config: dict) -> None:
 
     if phase == "running":
         target = st.session_state.scan_domain
-        st.markdown(f"**Analisi in corso per:** `{target}`")
-        _render_running_phase(config, target, st.session_state.get("target_context", {}))
+        _tc = st.session_state.get("target_context", {})
+        target_display = target or _tc.get("company_name") or _tc.get("piva_hint") or "target"
+        st.markdown(f"**Analisi in corso per:** `{target_display}`")
+        _render_running_phase(config, target, _tc)
         return
 
     if phase == "final":

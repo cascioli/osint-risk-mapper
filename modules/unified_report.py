@@ -8,6 +8,7 @@ from google import genai
 from google.genai import types as genai_types
 
 from modules.scan_context import ScanContext
+from modules.token_logger import log_llm_call
 
 _SYSTEM_PROMPT = (
     "Sei un analista senior di Threat Intelligence specializzato in OSINT su persone e aziende. "
@@ -198,4 +199,12 @@ def generate_unified_report(ctx: ScanContext, api_key: str, model_name: str) -> 
     except Exception as exc:
         raise RuntimeError(f"Gemini unified report failed: {exc}") from exc
 
+    usage = response.usage_metadata
+    log_llm_call(
+        call_site="unified_report",
+        model=model_name,
+        input_tokens=getattr(usage, "prompt_token_count", 0),
+        output_tokens=getattr(usage, "candidates_token_count", 0),
+        target=ctx.domain or ctx.target_context.get("company_name") or "unknown",
+    )
     return response.text

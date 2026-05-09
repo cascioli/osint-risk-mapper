@@ -18,14 +18,14 @@ from modules.agent.budget_tracker import BudgetConfig, BudgetTracker
 from modules.agent.context_builder import build_context_summary
 from modules.agent.system_prompt import AGENT_SYSTEM_PROMPT
 from modules.agent.tool_executor import execute_tool
-from modules.agent.tool_registry import TOOL_SERVICE_MAP, get_tool_declarations, make_call_key
+from modules.agent.tool_registry import TOOL_SERVICE_MAP, get_openai_tools, make_call_key
 from modules.scan_context import ScanContext
+from modules.token_logger import log_llm_call
 
 LogFn = Callable[[str], None]
 ProgressFn = Callable[[float], None]
 
 _DEFAULT_MODEL = "gpt-4o-mini"
-_FALLBACK_MODEL = "gpt-4o-mini"  # same — already cheapest; no fallback needed
 
 
 def _ts() -> str:
@@ -40,20 +40,6 @@ def _noop_progress(val: float) -> None:
     pass
 
 
-def _declarations_to_openai_tools(declarations) -> list[dict]:
-    """Convert Gemini FunctionDeclaration list → OpenAI tools format."""
-    tools = []
-    for decl in declarations:
-        tools.append({
-            "type": "function",
-            "function": {
-                "name": decl.name,
-                "description": decl.description,
-                "parameters": decl.parameters,
-            },
-        })
-    return tools
-
 
 def _openai_call(
     client: OpenAI,
@@ -61,17 +47,18 @@ def _openai_call(
     messages: list[dict],
     tools: list[dict],
     log_fn: LogFn,
-) -> tuple[object, str]:
-    """Call OpenAI with tool_choice='required'. Returns (message, model_used)."""
+) -> tuple[object, str, object]:
+    """Call OpenAI with tool_choice='required'. Returns (message, model_used, response)."""
     try:
         response = client.chat.completions.create(
             model=model,
             messages=messages,
             tools=tools,
             tool_choice="required",
+            parallel_tool_calls=False,
             temperature=0.1,
         )
-        return response.choices[0].message, model
+        return response.choices[0].message, model, response
     except RateLimitError as exc:
         delay = 20.0
         log_fn(f"[{_ts()}] [agent/openai] Rate limit — attendo {delay:.0f}s poi riprovo")
@@ -81,9 +68,10 @@ def _openai_call(
             messages=messages,
             tools=tools,
             tool_choice="required",
+            parallel_tool_calls=False,
             temperature=0.1,
         )
-        return response.choices[0].message, model
+        return response.choices[0].message, model, response
 
 
 def _run_final_phase(ctx: ScanContext, log_fn: LogFn, progress_fn: ProgressFn) -> None:
@@ -110,15 +98,26 @@ def _run_final_phase(ctx: ScanContext, log_fn: LogFn, progress_fn: ProgressFn) -
                 temperature=0.2,
             )
             ctx.unified_report = resp.choices[0].message.content
+            _usage = getattr(resp, "usage", None)
+            log_llm_call(
+                call_site="openai_final_report",
+                model=ctx.config.get("model_name", _DEFAULT_MODEL),
+                input_tokens=getattr(_usage, "prompt_tokens", 0),
+                output_tokens=getattr(_usage, "completion_tokens", 0),
+                target=ctx.domain or ctx.target_context.get("company_name", "unknown"),
+            )
             log_fn(f"[{_ts()}] Final → Report OpenAI generato ({len(ctx.unified_report or '')} chars)")
         except Exception as exc:
             ctx.unified_report = None
             log_fn(f"[{_ts()}] ⚠️ Final → Report ERRORE: {exc}")
     elif ctx.config.get("gemini_key") or (ai_provider == "gemini" and ai_key):
-        from modules.unified_report import generate_unified_report
         try:
             gemini_key = ctx.config.get("gemini_key") or ai_key
-            ctx.unified_report = generate_unified_report(ctx, api_key=gemini_key)
+            ctx.unified_report = generate_unified_report(
+                ctx,
+                api_key=gemini_key,
+                model_name=ctx.config.get("model_name", "gemini-2.5-flash"),
+            )
             log_fn(f"[{_ts()}] Final → Report Gemini generato ({len(ctx.unified_report or '')} chars)")
         except Exception as exc:
             ctx.unified_report = None
@@ -149,7 +148,8 @@ def _build_report_prompt(ctx: ScanContext) -> str:
     breached = [r.email for r in ctx.breach_results if r.hibp_breaches or r.leaklookup_sources]
     subs = list(dict.fromkeys(ctx.subdomains + ctx.vt_subdomains))[:15]
 
-    return f"""Produci un report OSINT professionale in italiano per il target: {ctx.domain}
+    _target = ctx.domain or ctx.target_context.get("company_name") or "target sconosciuto"
+    return f"""Produci un report OSINT professionale in italiano per il target: {_target}
 
 Dati raccolti:
 - Azienda: {ctx.target_context.get("company_name", "sconosciuta")}
@@ -184,8 +184,7 @@ def run_openai_agent_loop(
         return ctx
 
     client = OpenAI(api_key=ai_key)
-    declarations = get_tool_declarations()
-    tools = _declarations_to_openai_tools(declarations)
+    tools = get_openai_tools()
 
     # OpenAI conversation: system + alternating user/assistant/tool messages
     messages: list[dict] = [
@@ -222,8 +221,16 @@ def run_openai_agent_loop(
             messages.append({"role": "user", "content": f"[iter {state.agent_iterations}] Continua l'indagine. Scegli il prossimo tool."})
 
         try:
-            message, model_used = _openai_call(client, _DEFAULT_MODEL, messages, tools, log_fn)
+            message, model_used, oai_response = _openai_call(client, _DEFAULT_MODEL, messages, tools, log_fn)
             budget.record("gemini")  # reuse gemini budget slot as "llm calls" counter
+            usage = getattr(oai_response, "usage", None)
+            log_llm_call(
+                call_site="openai_agent_loop",
+                model=model_used,
+                input_tokens=getattr(usage, "prompt_tokens", 0),
+                output_tokens=getattr(usage, "completion_tokens", 0),
+                target=ctx.domain or ctx.target_context.get("company_name", "unknown"),
+            )
         except Exception as exc:
             log_fn(f"[{_ts()}] [agent/openai] Errore OpenAI: {exc}")
             break

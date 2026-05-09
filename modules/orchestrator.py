@@ -34,6 +34,7 @@ from modules.osint_hunter import fetch_emails_for_domain
 from modules.osint_leaklookup import check_emails_for_breaches
 from modules.osint_subdomains import get_subdomains
 from modules.scan_context import BreachResult, PersonProfile, ScanContext, SocialProfile
+from modules.token_logger import log_llm_call
 from modules.vt_client import fetch_vt_subdomains
 from modules.web_scraper import scrape_domain
 from modules.whois_client import fetch_whois
@@ -69,9 +70,9 @@ def _get_company_name(ctx: ScanContext) -> str:
     if org and not any(g in org.lower() for g in generic):
         return org.strip()
 
-    # 3. Domain label fallback
-    label = ctx.domain.split(".")[0].replace("-", " ").title()
-    return label
+    # 3. Domain label fallback (domain may be None in agent mode)
+    label = (ctx.domain or "").split(".")[0].replace("-", " ").title()
+    return label or "unknown"
 
 
 def _dedup_dork_results(existing: list[dict], new: list[dict]) -> list[dict]:
@@ -522,6 +523,14 @@ def run_round3(
                 temperature=0.1,
                 response_mime_type="application/json",
             ),
+        )
+        usage = response.usage_metadata
+        log_llm_call(
+            call_site="orchestrator_round3",
+            model=config.get("model_name", "gemini-2.5-flash"),
+            input_tokens=getattr(usage, "prompt_token_count", 0),
+            output_tokens=getattr(usage, "candidates_token_count", 0),
+            target=ctx.domain or ctx.target_context.get("company_name") or "unknown",
         )
         raw = response.text.strip()
         if raw.startswith("```"):

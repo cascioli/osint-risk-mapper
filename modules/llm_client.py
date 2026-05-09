@@ -6,6 +6,8 @@ from typing import Any
 from google import genai
 from google.genai import types as genai_types
 
+from modules.token_logger import log_llm_call
+
 
 SYSTEM_PROMPT = (
     "Sei un analista SOC. Analizza questi dati OSINT aggregati e deduplicati "
@@ -52,6 +54,14 @@ def analyze_with_gemini(
                 system_instruction=SYSTEM_PROMPT,
                 temperature=0.3,
             ),
+        )
+        usage = response.usage_metadata
+        log_llm_call(
+            call_site="llm_client",
+            model=model_name,
+            input_tokens=getattr(usage, "prompt_token_count", 0),
+            output_tokens=getattr(usage, "candidates_token_count", 0),
+            target=data.get("domain", "host_analysis") if isinstance(data, dict) else "host_analysis",
         )
         return response.text or ""
     except Exception as exc:

@@ -7,6 +7,8 @@ import json
 from google import genai
 from google.genai import types as genai_types
 
+from modules.token_logger import log_llm_call
+
 
 _SYSTEM_PROMPT = (
     "Sei un analista di Threat Intelligence. "
@@ -87,6 +89,14 @@ def generate_risk_report(
                 system_instruction=_SYSTEM_PROMPT,
                 temperature=0.3,
             ),
+        )
+        usage = response.usage_metadata
+        log_llm_call(
+            call_site="ai_analyzer",
+            model=model_name,
+            input_tokens=getattr(usage, "prompt_token_count", 0),
+            output_tokens=getattr(usage, "candidates_token_count", 0),
+            target=next(iter(data_json), "unknown") if data_json else "unknown",
         )
         return response.text or ""
     except Exception as exc:

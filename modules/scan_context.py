@@ -28,7 +28,7 @@ class PersonProfile:
 
 @dataclass
 class ScanContext:
-    domain: str
+    domain: str | None
     config: dict[str, str]
 
     # User-provided target context (from onboarding form)
