@@ -70,3 +70,8 @@ class ScanContext:
     # Final outputs
     unified_report: str | None = None
     graph_data: dict | None = None
+
+    # Agent mode metadata (0 / [] / "" when pipeline mode was used)
+    agent_iterations: int = 0
+    agent_tool_call_log: list[dict] = field(default_factory=list)
+    agent_summary: str = ""

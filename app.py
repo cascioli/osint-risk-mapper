@@ -72,6 +72,34 @@ def _render_sidebar(env: dict[str, str]) -> dict:
         )
         st.caption("Subdomain Enumeration (crt.sh) sempre attivo — nessuna key richiesta.")
 
+        st.markdown("---")
+        st.header("🤖 Modalità Agente")
+        use_agent = st.toggle(
+            "Agente Gemini adattivo",
+            value=bool(env["GEMINI_API_KEY"]),
+            key="use_agent_mode",
+            help="Sostituisce la pipeline fissa con un agente Gemini che decide autonomamente quali tool chiamare.",
+            disabled=not env["GEMINI_API_KEY"],
+        )
+        max_iterations = st.slider(
+            "Max iterazioni agente",
+            min_value=5, max_value=50, value=30, step=5,
+            key="agent_max_iterations",
+            help="Limite massimo di turni Gemini. Ogni turno = 1 tool call.",
+            disabled=not use_agent,
+        )
+        max_serper = st.slider(
+            "Max chiamate Serper (dorking)",
+            min_value=5, max_value=80, value=40, step=5,
+            key="agent_max_serper",
+            help="Budget massimo per le chiamate Google dorking via Serper/SerpAPI.",
+            disabled=not use_agent,
+        )
+        if use_agent:
+            st.caption("Pipeline classica disponibile disattivando il toggle.")
+        else:
+            st.caption("Pipeline classica attiva (5 round fissi).")
+
     return {
         "mode": mode,
         "provider": "gemini",
@@ -85,6 +113,9 @@ def _render_sidebar(env: dict[str, str]) -> dict:
         "serpapi_key": env["SERPAPI_KEY"],
         "opencorporates_key": env["OPENCORPORATES_API_KEY"],
         "max_people_dork": max_people,
+        "use_agent": use_agent,
+        "agent_max_iterations": max_iterations,
+        "agent_max_serper_calls": max_serper,
     }
 
 
@@ -168,11 +199,20 @@ def _render_running_phase(config: dict, domain: str, target_context: dict) -> No
         progress_bar.progress(val, text=f"Analisi in corso... {int(val * 100)}%")
 
     max_people = config.get("max_people_dork", 5)
-    ctx = run_round1(ctx, log_fn=log_fn, progress_fn=progress_fn)
-    ctx = run_round1_5(ctx, log_fn=log_fn, progress_fn=progress_fn)
-    ctx = run_round2(ctx, max_people=max_people, log_fn=log_fn, progress_fn=progress_fn)
-    ctx = run_round3(ctx, log_fn=log_fn, progress_fn=progress_fn)
-    ctx = run_final(ctx, log_fn=log_fn, progress_fn=progress_fn)
+    if config.get("use_agent") and config.get("ai_key"):
+        from modules.agent.budget_tracker import BudgetConfig
+        from modules.agent.loop import run_agent_loop
+        budget_cfg = BudgetConfig(
+            max_iterations=config.get("agent_max_iterations", 30),
+            max_serper_calls=config.get("agent_max_serper_calls", 40),
+        )
+        ctx = run_agent_loop(ctx, budget_config=budget_cfg, log_fn=log_fn, progress_fn=progress_fn)
+    else:
+        ctx = run_round1(ctx, log_fn=log_fn, progress_fn=progress_fn)
+        ctx = run_round1_5(ctx, log_fn=log_fn, progress_fn=progress_fn)
+        ctx = run_round2(ctx, max_people=max_people, log_fn=log_fn, progress_fn=progress_fn)
+        ctx = run_round3(ctx, log_fn=log_fn, progress_fn=progress_fn)
+        ctx = run_final(ctx, log_fn=log_fn, progress_fn=progress_fn)
 
     st.session_state.scan_ctx = ctx
     st.session_state.scan_phase = "final"
