@@ -61,6 +61,11 @@ def _render_sidebar(env: dict[str, str]) -> dict:
         _status("Breach DB (Leak-Lookup)", bool(env["LEAKLOOKUP_API_KEY"]))
         _status("Google Dorking (Serper.dev)", bool(env["SERPER_API_KEY"]) or bool(env["SERPAPI_KEY"]))
         _status("AI Reports (Gemini)", bool(env["GEMINI_API_KEY"]))
+        _status("AI Reports (OpenAI gpt-4o-mini)", bool(env["OPENAI_API_KEY"]))
+        _status("Registro IT — PEC (inipec.gov.it)", True)
+        _status("Aziende IT (Atoka.io)", bool(env["ATOKA_API_KEY"]))
+        _status("Breach by Username (DeHashed)", bool(env["DEHASHED_API_KEY"]))
+        _status("IntelX Leaked DB", bool(env["INTELX_API_KEY"]))
         st.markdown("---")
 
         st.header("⚙️ Impostazioni Analisi")
@@ -74,18 +79,35 @@ def _render_sidebar(env: dict[str, str]) -> dict:
 
         st.markdown("---")
         st.header("🤖 Modalità Agente")
+        _has_gemini = bool(env["GEMINI_API_KEY"])
+        _has_openai = bool(env["OPENAI_API_KEY"])
+        _agent_available = _has_gemini or _has_openai
         use_agent = st.toggle(
-            "Agente Gemini adattivo",
-            value=bool(env["GEMINI_API_KEY"]),
+            "Agente AI adattivo",
+            value=_agent_available,
             key="use_agent_mode",
-            help="Sostituisce la pipeline fissa con un agente Gemini che decide autonomamente quali tool chiamare.",
-            disabled=not env["GEMINI_API_KEY"],
+            help="Sostituisce la pipeline fissa con un agente AI che decide autonomamente quali tool chiamare.",
+            disabled=not _agent_available,
         )
+        _provider_options = []
+        if _has_gemini:
+            _provider_options.append("Gemini (gemini-2.5-flash)")
+        if _has_openai:
+            _provider_options.append("OpenAI (gpt-4o-mini)")
+        if not _provider_options:
+            _provider_options = ["Gemini (gemini-2.5-flash)"]
+        agent_provider_label = st.radio(
+            "Provider AI agente",
+            _provider_options,
+            key="agent_provider",
+            disabled=not use_agent,
+        )
+        agent_provider = "openai" if "OpenAI" in (agent_provider_label or "") else "gemini"
         max_iterations = st.slider(
             "Max iterazioni agente",
             min_value=5, max_value=50, value=30, step=5,
             key="agent_max_iterations",
-            help="Limite massimo di turni Gemini. Ogni turno = 1 tool call.",
+            help="Limite massimo di turni AI. Ogni turno = 1 tool call.",
             disabled=not use_agent,
         )
         max_serper = st.slider(
@@ -100,11 +122,15 @@ def _render_sidebar(env: dict[str, str]) -> dict:
         else:
             st.caption("Pipeline classica attiva (5 round fissi).")
 
+    _ai_key = env["OPENAI_API_KEY"] if agent_provider == "openai" else env["GEMINI_API_KEY"]
+    _model_name = "gpt-4o-mini" if agent_provider == "openai" else _GEMINI_MODEL
+
     return {
         "mode": mode,
-        "provider": "gemini",
-        "model_name": _GEMINI_MODEL,
-        "ai_key": env["GEMINI_API_KEY"],
+        "provider": agent_provider,
+        "model_name": _model_name,
+        "ai_key": _ai_key,
+        "gemini_key": env["GEMINI_API_KEY"],
         "hunter_key": env["HUNTER_API_KEY"],
         "leaklookup_key": env["LEAKLOOKUP_API_KEY"],
         "hibp_key": env["HIBP_API_KEY"],
@@ -201,12 +227,16 @@ def _render_running_phase(config: dict, domain: str, target_context: dict) -> No
     max_people = config.get("max_people_dork", 5)
     if config.get("use_agent") and config.get("ai_key"):
         from modules.agent.budget_tracker import BudgetConfig
-        from modules.agent.loop import run_agent_loop
         budget_cfg = BudgetConfig(
             max_iterations=config.get("agent_max_iterations", 30),
             max_serper_calls=config.get("agent_max_serper_calls", 40),
         )
-        ctx = run_agent_loop(ctx, budget_config=budget_cfg, log_fn=log_fn, progress_fn=progress_fn)
+        if config.get("provider") == "openai":
+            from modules.agent.openai_loop import run_openai_agent_loop
+            ctx = run_openai_agent_loop(ctx, budget_config=budget_cfg, log_fn=log_fn, progress_fn=progress_fn)
+        else:
+            from modules.agent.loop import run_agent_loop
+            ctx = run_agent_loop(ctx, budget_config=budget_cfg, log_fn=log_fn, progress_fn=progress_fn)
     else:
         ctx = run_round1(ctx, log_fn=log_fn, progress_fn=progress_fn)
         ctx = run_round1_5(ctx, log_fn=log_fn, progress_fn=progress_fn)

@@ -361,10 +361,221 @@ def _dispatch(
         log_fn(f"[agent] search_by_query[{tag}]({query[:60]}) → {len(result)} risultati")
         return {"results": len(result), "query": query, "summary": f"{len(result)} risultati per '{query[:40]}'"}
 
+    # ── Registry & Personal OSINT ─────────────────────────────────────────────
+
+    if tool_name == "fetch_pec_email":
+        from modules.inipec_client import fetch_pec_by_company, fetch_pec_by_person
+        company_name = args.get("company_name", "")
+        city = args.get("city", "")
+        first_name = args.get("first_name", "")
+        last_name = args.get("last_name", "")
+        pec_emails: list[str] = []
+        if company_name:
+            pec_emails += _with_retry(lambda: fetch_pec_by_company(company_name, city)) or []
+        if first_name and last_name:
+            pec_emails += _with_retry(lambda: fetch_pec_by_person(first_name, last_name)) or []
+        pec_emails = list(dict.fromkeys(pec_emails))
+        new_emails = [e for e in pec_emails if e not in ctx.emails]
+        ctx.emails = list(dict.fromkeys(ctx.emails + new_emails))
+        log_fn(f"[agent] fetch_pec_email({company_name or first_name+' '+last_name}) → {len(pec_emails)} PEC")
+        return {"pec_emails": pec_emails, "new_to_emails": new_emails, "summary": f"{len(pec_emails)} PEC trovate: {pec_emails[:3]}"}
+
+    if tool_name == "fetch_atoka_company":
+        from modules.atoka_client import search_company
+        company_name = args.get("company_name", "")
+        city = args.get("city", "")
+        piva = args.get("piva", ctx.piva or "")
+        atoka_key = cfg.get("atoka_key", "")
+        if not atoka_key:
+            return {"error": "atoka_key mancante", "summary": "skip: no atoka_key"}
+        result = _with_retry(lambda: search_company(company_name, city, piva, atoka_key)) or {}
+        if result:
+            ctx.atoka_data = result
+            if result.get("piva") and not ctx.piva:
+                ctx.piva = result["piva"]
+            if result.get("pec") and result["pec"] not in ctx.emails:
+                ctx.emails.append(result["pec"])
+            if result.get("email") and result["email"] not in ctx.emails:
+                ctx.emails.append(result["email"])
+            for o in result.get("officers", []):
+                name = o.get("name", "")
+                if name and name not in ctx.person_names:
+                    ctx.person_names.append(name)
+                if o not in ctx.company_officers:
+                    ctx.company_officers.append(o)
+        budget.record("atoka")
+        log_fn(f"[agent] fetch_atoka_company({company_name}) → {bool(result)}")
+        return {
+            "found": bool(result),
+            "piva": result.get("piva", ""),
+            "sede": result.get("sede", ""),
+            "ateco": result.get("ateco", ""),
+            "officers": [o.get("name") for o in result.get("officers", [])],
+            "pec": result.get("pec", ""),
+            "summary": f"Atoka: {result.get('name','n/d')} — {result.get('sede','')}" if result else "nessun risultato",
+        }
+
+    if tool_name == "search_dehashed":
+        from modules.dehashed_client import search as dehashed_search
+        query = args.get("query", "")
+        query_type = args.get("query_type", "username")
+        dh_key = cfg.get("dehashed_key", "")
+        dh_email = cfg.get("dehashed_email", "")
+        if not dh_key or not dh_email:
+            return {"error": "dehashed credentials mancanti", "summary": "skip: no dehashed_key/email"}
+        if not query:
+            return {"summary": "skip: query vuota"}
+        result = _with_retry(lambda: dehashed_search(query, query_type, dh_email, dh_key)) or []
+        # Extract discovered emails and add to ctx
+        found_emails = list({r["email"] for r in result if r.get("email")})
+        new_emails = [e for e in found_emails if e and e not in ctx.emails]
+        ctx.emails = list(dict.fromkeys(ctx.emails + new_emails))
+        # Add breach info
+        for r in result:
+            if r.get("email"):
+                _merge_breach_results(ctx, [r["email"]], {}, {})
+        # Store raw results in followup
+        ctx.llm_followup_results = _dedup_urls(ctx.llm_followup_results, [
+            {"title": f"[DeHashed] {r.get('database_name','?')} — {r.get('username','?')}", "url": "", **r}
+            for r in result[:20]
+        ])
+        budget.record("dehashed")
+        log_fn(f"[agent] search_dehashed({query_type}:{query}) → {len(result)} record")
+        return {
+            "records": len(result),
+            "emails_found": found_emails[:10],
+            "usernames": [r.get("username") for r in result[:5] if r.get("username")],
+            "phones": [r.get("phone") for r in result[:5] if r.get("phone")],
+            "databases": list({r.get("database_name") for r in result if r.get("database_name")})[:5],
+            "summary": f"{len(result)} record DeHashed per {query_type}:{query}",
+        }
+
+    if tool_name == "search_intelx":
+        from modules.intelx_client import search as intelx_search
+        query = args.get("query", "")
+        intelx_key = cfg.get("intelx_key", "")
+        if not intelx_key:
+            return {"error": "intelx_key mancante", "summary": "skip: no intelx_key"}
+        if not query:
+            return {"summary": "skip: query vuota"}
+        result = _with_retry(lambda: intelx_search(query, intelx_key)) or []
+        ctx.llm_followup_results = _dedup_urls(ctx.llm_followup_results, [
+            {"title": f"[IntelX] {r.get('bucket','?')} — {r.get('name','?')}", "url": "", **r}
+            for r in result[:20]
+        ])
+        budget.record("intelx")
+        log_fn(f"[agent] search_intelx({query}) → {len(result)} record")
+        return {
+            "records": len(result),
+            "buckets": list({r.get("bucket") for r in result if r.get("bucket")})[:5],
+            "summary": f"{len(result)} record IntelX per '{query}'",
+        }
+
+    if tool_name == "scrape_social_bio":
+        from modules.social_scraper import scrape_facebook_bio, scrape_instagram_bio
+        url = args.get("url", "")
+        platform = args.get("platform", "").lower()
+        if not url:
+            return {"summary": "skip: url vuoto"}
+        if platform == "instagram":
+            bio_data = _with_retry(lambda: scrape_instagram_bio(url)) or {}
+        elif platform == "facebook":
+            bio_data = _with_retry(lambda: scrape_facebook_bio(url)) or {}
+        else:
+            return {"error": "platform deve essere 'instagram' o 'facebook'", "summary": "skip: platform non riconosciuta"}
+        if bio_data.get("email") and bio_data["email"] not in ctx.emails:
+            ctx.emails.append(bio_data["email"])
+        if bio_data.get("phone"):
+            phones = ctx.scraped_contacts.get("phones", [])
+            if bio_data["phone"] not in phones:
+                phones.append(bio_data["phone"])
+                ctx.scraped_contacts["phones"] = phones
+        log_fn(f"[agent] scrape_social_bio({platform}:{url[:50]}) → {list(bio_data.keys())}")
+        return {**bio_data, "summary": f"bio scraped: email={bio_data.get('email','')}, phone={bio_data.get('phone','')}"}
+
+    if tool_name == "search_pagine_bianche":
+        from modules.osint_dorking import search_pagine_bianche
+        name = args.get("name", "")
+        city = args.get("city", "")
+        serper_key = cfg.get("serper_key", "")
+        serpapi_key = cfg.get("serpapi_key", "")
+        if not (serper_key or serpapi_key):
+            return {"error": "serper_key mancante", "summary": "skip: no serper_key"}
+        result = _with_retry(lambda: search_pagine_bianche(name, city, serper_key, serpapi_key)) or []
+        ctx.llm_followup_results = _dedup_urls(ctx.llm_followup_results, result)
+        budget.record("serper")
+        log_fn(f"[agent] search_pagine_bianche({name}) → {len(result)} risultati")
+        return {"results": len(result), "urls": [r.get("url") for r in result[:3]], "summary": f"{len(result)} risultati Pagine Bianche per {name}"}
+
+    if tool_name == "search_username_leaks":
+        from modules.osint_dorking import search_username_leaks
+        username = args.get("username", "")
+        serper_key = cfg.get("serper_key", "")
+        serpapi_key = cfg.get("serpapi_key", "")
+        if not (serper_key or serpapi_key):
+            return {"error": "serper_key mancante", "summary": "skip: no serper_key"}
+        if not username:
+            return {"summary": "skip: username vuoto"}
+        result = _with_retry(lambda: search_username_leaks(username, serper_key, serpapi_key)) or []
+        ctx.llm_followup_results = _dedup_urls(ctx.llm_followup_results, result)
+        budget.record("serper")
+        log_fn(f"[agent] search_username_leaks({username}) → {len(result)} risultati")
+        return {"results": len(result), "summary": f"{len(result)} leak per username {username}"}
+
+    if tool_name == "search_registry_dork":
+        from modules.osint_dorking import search_registry_dork
+        company_name = args.get("company_name", "")
+        piva = args.get("piva", ctx.piva or "")
+        city = args.get("city", "")
+        serper_key = cfg.get("serper_key", "")
+        serpapi_key = cfg.get("serpapi_key", "")
+        if not (serper_key or serpapi_key):
+            return {"error": "serper_key mancante", "summary": "skip: no serper_key"}
+        result = _with_retry(lambda: search_registry_dork(company_name, piva, city, serper_key, serpapi_key)) or []
+        ctx.llm_followup_results = _dedup_urls(ctx.llm_followup_results, result)
+        budget.record("serper")
+        log_fn(f"[agent] search_registry_dork({company_name}) → {len(result)} risultati")
+        return {"results": len(result), "summary": f"{len(result)} risultati registro imprese per {company_name}"}
+
+    if tool_name == "search_person_advanced":
+        from modules.osint_dorking import search_person_advanced
+        name = args.get("name", "")
+        city = args.get("city", "")
+        serper_key = cfg.get("serper_key", "")
+        serpapi_key = cfg.get("serpapi_key", "")
+        if not (serper_key or serpapi_key):
+            return {"error": "serper_key mancante", "summary": "skip: no serper_key"}
+        result = _with_retry(lambda: search_person_advanced(name, city, serper_key, serpapi_key)) or []
+        ctx.llm_followup_results = _dedup_urls(ctx.llm_followup_results, result)
+        budget.record("serper")
+        log_fn(f"[agent] search_person_advanced({name}) → {len(result)} risultati")
+        return {"results": len(result), "summary": f"{len(result)} menzioni contatto per {name}"}
+
     return {"error": f"tool sconosciuto: {tool_name}", "summary": f"tool non riconosciuto: {tool_name}"}
 
 
 # ── Helpers ───────────────────────────────────────────────────────────────────
+
+def derive_usernames(full_name: str) -> list[str]:
+    """Derive common Italian username patterns from a full name.
+
+    E.g. "Samantha Fontana" → [samantha.fontana, sfontana, samanthafontana, samantha_fontana, fontanas]
+    """
+    parts = full_name.lower().split()
+    if not parts:
+        return []
+    if len(parts) == 1:
+        return [parts[0]]
+    first, last = parts[0], parts[-1]
+    return list(dict.fromkeys([
+        f"{first}.{last}",
+        f"{first[0]}{last}",
+        f"{first}{last}",
+        f"{first}_{last}",
+        f"{last}{first[0]}",
+        f"{last}.{first}",
+    ]))
+
 
 def _detect_platform(url: str) -> str | None:
     url_lower = url.lower()

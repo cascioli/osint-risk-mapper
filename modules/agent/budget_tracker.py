@@ -15,6 +15,9 @@ class BudgetConfig:
     max_vt_calls: int = 3
     max_leaklookup_calls: int = 20
     max_opencorporates_calls: int = 5
+    max_dehashed_calls: int = 10
+    max_intelx_calls: int = 5
+    max_atoka_calls: int = 3
 
 
 class BudgetTracker:
@@ -41,7 +44,10 @@ class BudgetTracker:
         return max(0, self.config.max_iterations - current)
 
     def summary_dict(self) -> dict[str, dict]:
-        services = ["gemini", "serper", "hibp", "hunter", "vt", "leaklookup", "opencorporates"]
+        services = [
+            "gemini", "serper", "hibp", "hunter", "vt",
+            "leaklookup", "opencorporates", "dehashed", "intelx", "atoka",
+        ]
         return {
             s: {"used": self._counts.get(s, 0), "remaining": self.remaining(s)}
             for s in services

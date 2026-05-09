@@ -319,3 +319,89 @@ def search_exposed_documents(
 
     dork_query = f"site:{domain} ext:{_SENSITIVE_EXTENSIONS}"
     return search_by_query(dork_query, api_key, num_results, fallback_key)
+
+
+def search_pagine_bianche(
+    name: str,
+    city: str = "",
+    api_key: str = "",
+    fallback_key: str = "",
+    num_results: int = 5,
+) -> list[dict[str, str]]:
+    """Search paginebianche.it and paginegialle.it for a person's phone and address.
+
+    Effective for Italian PMI owners — most have a personal or business listing.
+    """
+    if not name:
+        return []
+    base = f'"{name}"'
+    if city:
+        base += f' "{city}"'
+    query = f'{base} (site:paginebianche.it OR site:paginegialle.it OR site:tuttitalia.it)'
+    return search_by_query(query, api_key, num_results, fallback_key)
+
+
+def search_username_leaks(
+    username: str,
+    api_key: str = "",
+    fallback_key: str = "",
+    num_results: int = 10,
+) -> list[dict[str, str]]:
+    """Search for a username in Pastebin, GitHub, leak forums, and Telegram.
+
+    Use username variations derived from a person's name (e.g. sfontana, samantha.fontana).
+    """
+    if not username:
+        return []
+    query = (
+        f'"{username}" '
+        f'(site:pastebin.com OR site:github.com OR site:raidforums.com '
+        f'OR site:breached.to OR site:telegram.me OR intext:password)'
+    )
+    return search_by_query(query, api_key, num_results, fallback_key)
+
+
+def search_registry_dork(
+    company_name: str,
+    piva: str = "",
+    city: str = "",
+    api_key: str = "",
+    fallback_key: str = "",
+    num_results: int = 10,
+) -> list[dict[str, str]]:
+    """Dork Italian company registry sources for company data.
+
+    Searches registroimprese.it, impresainungiorno.gov.it, codicefiscale.net
+    and other public sources for P.IVA, sede, ATECO, and company officers.
+    """
+    if not company_name:
+        return []
+    base = f'"{company_name}"'
+    if city:
+        base += f' "{city}"'
+    if piva:
+        # P.IVA search is more precise when available
+        query = f'"{piva}" (site:registroimprese.it OR site:codicefiscale.net OR site:impresainungiorno.gov.it OR site:ateco.camera.it)'
+    else:
+        query = f'{base} (site:registroimprese.it OR site:codicefiscale.net OR site:impresainungiorno.gov.it OR partita IVA OR codice fiscale)'
+    return search_by_query(query, api_key, num_results, fallback_key)
+
+
+def search_person_advanced(
+    name: str,
+    city: str = "",
+    api_key: str = "",
+    fallback_key: str = "",
+    num_results: int = 10,
+) -> list[dict[str, str]]:
+    """Advanced dork for a person's email, phone, and address across all public sources.
+
+    Searches for the person's name in combination with contact-revealing keywords.
+    """
+    if not name:
+        return []
+    base = f'"{name}"'
+    if city:
+        base += f' "{city}"'
+    query = f'{base} (email OR telefono OR "tel:" OR "@" OR indirizzo OR contatti OR LinkedIn OR Facebook)'
+    return search_by_query(query, api_key, num_results, fallback_key)

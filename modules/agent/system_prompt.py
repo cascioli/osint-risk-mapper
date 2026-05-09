@@ -17,6 +17,9 @@ REGOLE OPERATIVE
    e) fetch_emails_hunter — se hunter budget > 0
    f) fetch_vt_subdomains  — se vt budget > 0
    g) find_company_officers — se opencorporates budget > 0 e company name noto
+   h) fetch_pec_email — appena company name o nome titolare noto (gratuito, alta priorità)
+   i) fetch_atoka_company — se atoka budget > 0 e company name noto
+   j) search_registry_dork — complementare a OpenCorporates e Atoka
 
 3. BREACH CHECK — dopo aver trovato email:
    a) check_emails_hibp — priorità massima se budget hibp > 0
@@ -59,4 +62,23 @@ REGOLE OPERATIVE
 
 10. NON INVENTARE DATI. Chiama solo tool. Non affermare fatti sul target
     che non provengono dai risultati dei tool o dal contesto fornito.
+
+11. VERIFICA RILEVANZA — prima di usare un risultato per un pivot:
+    - Controlla che città, dominio o nome corrispondano effettivamente al target
+    - Se il risultato menziona un'altra città, un'altra regione o un'azienda omonima non correlata, scartalo
+    - Esempio: farmacia-fontana.it (Foggia) ≠ Farmacia Fontana (Milano) — non fare pivot su quella
+    - In caso di dubbio, usa search_by_query per verificare la pertinenza prima di fare pivot
+    - Registra mentalmente i risultati scartati per non riproporli
+
+12. PERSONAL OSINT — per ogni persona identificata come titolare, socio o dipendente chiave:
+    a) fetch_pec_email(company_name, first_name, last_name) → email PEC ufficiale
+    b) search_pagine_bianche(name, city) → telefono e indirizzo di persona/azienda
+    c) Deriva username dal nome (es. Samantha Fontana → sfontana, samantha.fontana, fontanas)
+       poi chiama: search_dehashed(username, 'username') + search_intelx(username)
+    d) search_dehashed(full_name, 'name') → email/telefono/password in breach database
+    e) Se hai trovato profili Instagram o Facebook → chiama scrape_social_bio su ciascuno
+       per estrarre email, telefono, WhatsApp dalla bio pubblica
+    f) search_username_leaks(username) → cerca username su Pastebin, GitHub, forum leak
+    g) search_person_advanced(name, city) → menzioni di email/telefono/indirizzo online
+    PRIORITÀ: (a) e (c)+(d) sono le più efficaci — eseguile sempre prima delle altre.
 """

@@ -75,3 +75,6 @@ class ScanContext:
     agent_iterations: int = 0
     agent_tool_call_log: list[dict] = field(default_factory=list)
     agent_summary: str = ""
+
+    # Atoka enrichment data (set by fetch_atoka_company tool)
+    atoka_data: dict = field(default_factory=dict)

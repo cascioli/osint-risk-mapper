@@ -26,6 +26,15 @@ TOOL_SERVICE_MAP: dict[str, str | None] = {
     "search_brand_documents": "serper",
     "search_piva_mentions": "serper",
     "search_email_pattern_external": "serper",
+    "fetch_pec_email": None,
+    "fetch_atoka_company": "atoka",
+    "search_dehashed": "dehashed",
+    "search_intelx": "intelx",
+    "scrape_social_bio": None,
+    "search_pagine_bianche": "serper",
+    "search_username_leaks": "serper",
+    "search_registry_dork": "serper",
+    "search_person_advanced": "serper",
     "finish_investigation": None,
 }
 
@@ -209,6 +218,101 @@ def get_tool_declarations() -> list[genai_types.FunctionDeclaration]:
                 "context_tag": {**_STR, "description": "Etichetta breve per il log, es. 'piva_dork'"},
             },
             ["query"],
+        ),
+        # ── Registry & Personal OSINT ─────────────────────────────────────────
+        _decl(
+            "fetch_pec_email",
+            "Cerca la PEC ufficiale dell'azienda o del titolare su inipec.gov.it. "
+            "PEC = email legale certificata italiana, ottima per identificare contatto reale. "
+            "Gratuito. Chiamare appena company_name o nome titolare è noto.",
+            {
+                "company_name": {**_STR, "description": "Nome commerciale o ragione sociale, può essere vuoto"},
+                "city": {**_STR, "description": "Città per disambiguare, può essere vuoto"},
+                "first_name": {**_STR, "description": "Nome del titolare/legale rappresentante, può essere vuoto"},
+                "last_name": {**_STR, "description": "Cognome del titolare/legale rappresentante, può essere vuoto"},
+            },
+            [],
+        ),
+        _decl(
+            "fetch_atoka_company",
+            "Dati aziendali completi da Atoka.io: ATECO, sede legale, fatturato, soci, PEC, email, telefono. "
+            "Richiede atoka budget > 0.",
+            {
+                "company_name": {**_STR, "description": "Nome commerciale o ragione sociale"},
+                "city": {**_STR, "description": "Città per disambiguare, può essere vuoto"},
+                "piva": {**_STR, "description": "P.IVA se nota, può essere vuoto"},
+            },
+            ["company_name"],
+        ),
+        _decl(
+            "search_dehashed",
+            "Cerca nel database breach DeHashed per username, email, nome o telefono. "
+            "Ottimo per trovare email personale, telefono, password hash da nome titolare. "
+            "query_type: 'username'|'email'|'name'|'phone'. Budget: max_dehashed_calls.",
+            {
+                "query": {**_STR, "description": "Valore da cercare (username, email, nome completo, telefono)"},
+                "query_type": {**_STR, "description": "Tipo di campo: username | email | name | phone"},
+            },
+            ["query", "query_type"],
+        ),
+        _decl(
+            "search_intelx",
+            "Cerca su IntelX leaked databases. Supporta email, username, dominio, telefono. "
+            "Complementare a DeHashed. Budget: max_intelx_calls.",
+            {
+                "query": {**_STR, "description": "Valore da cercare: email, username, dominio, numero di telefono"},
+            },
+            ["query"],
+        ),
+        _decl(
+            "scrape_social_bio",
+            "Scraping profilo pubblico Instagram o Facebook: estrae email, telefono, sito web, WhatsApp dalla bio. "
+            "Gratuito. Chiamare su ogni profilo Instagram/Facebook trovato dai dork social.",
+            {
+                "url": {**_STR, "description": "URL completo del profilo (es. https://www.instagram.com/username/)"},
+                "platform": {**_STR, "description": "Piattaforma: 'instagram' o 'facebook'"},
+            },
+            ["url", "platform"],
+        ),
+        _decl(
+            "search_pagine_bianche",
+            "Cerca telefono e indirizzo di una persona su paginebianche.it e paginegialle.it via Google dork. "
+            "Molto efficace per titolari di PMI italiane. Budget: max_serper_calls.",
+            {
+                "name": {**_STR, "description": "Nome completo della persona"},
+                "city": {**_STR, "description": "Città, può essere vuoto"},
+            },
+            ["name"],
+        ),
+        _decl(
+            "search_username_leaks",
+            "Cerca uno username derivato dal nome (es. sfontana) su Pastebin, GitHub, forum leak. "
+            "Trova leak contenenti email personale o password. Budget: max_serper_calls.",
+            {
+                "username": {**_STR, "description": "Username da cercare (es. sfontana, samantha.fontana)"},
+            },
+            ["username"],
+        ),
+        _decl(
+            "search_registry_dork",
+            "Dork su fonti camerali italiane (registroimprese.it, impresainungiorno.gov.it, codicefiscale.net) "
+            "per trovare CF, sede, ATECO, soci via Google. Budget: max_serper_calls.",
+            {
+                "company_name": {**_STR, "description": "Nome commerciale o ragione sociale"},
+                "piva": {**_STR, "description": "P.IVA se nota, può essere vuoto"},
+                "city": {**_STR, "description": "Città, può essere vuoto"},
+            },
+            ["company_name"],
+        ),
+        _decl(
+            "search_person_advanced",
+            "Dork avanzato per trovare email, telefono, indirizzo di una persona su tutti i siti pubblici. "
+            "Cerca menzioni del nome con parole chiave contatto. Budget: max_serper_calls.",
+            {
+                "name": {**_STR, "description": "Nome completo della persona"},
+                "city": {**_STR, "description": "Città, può essere vuoto"},
+            },
+            ["name"],
         ),
         # ── Terminal signal ───────────────────────────────────────────────────
         _decl(

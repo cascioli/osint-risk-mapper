@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from modules.agent.budget_tracker import BudgetTracker
+from modules.agent.tool_executor import derive_usernames
 from modules.scan_context import ScanContext
 
 
@@ -14,6 +15,9 @@ def _missing_services(config: dict) -> list[str]:
         "leaklookup": "leaklookup_key",
         "serper": "serper_key",
         "opencorporates": "opencorporates_key",
+        "atoka": "atoka_key",
+        "dehashed": "dehashed_key",
+        "intelx": "intelx_key",
     }
     missing = []
     for svc, key in key_map.items():
@@ -59,6 +63,18 @@ def build_context_summary(
     emails_sample = ctx.emails[:5]
     unchecked = [e for e in ctx.emails if e not in emails_breach_checked]
 
+    # Derive usernames for known persons (for DeHashed/IntelX/leak searches)
+    derived_usernames: list[str] = []
+    for name in all_people[:5]:
+        derived_usernames.extend(derive_usernames(name))
+    derived_usernames = list(dict.fromkeys(derived_usernames))[:15]
+
+    # Atoka summary if available
+    atoka_summary = ""
+    if getattr(ctx, "atoka_data", {}):
+        ad = ctx.atoka_data
+        atoka_summary = f"  atoka: {ad.get('name','')} | {ad.get('sede','')} | ATECO={ad.get('ateco','')}"
+
     return f"""=== OSINT AGENT CONTEXT — iterazione {iteration} ===
 
 TARGET
@@ -71,7 +87,9 @@ DISCOVERY
   emails_trovate: {len(ctx.emails)} — campione: {emails_sample}
   email_non_ancora_verificate_breach: {unchecked[:10]}
   persone_note: {all_people[:8]}
-  company_officers: {len(ctx.company_officers)} (da OpenCorporates)
+  usernames_derivati_da_nomi: {derived_usernames}
+  company_officers: {len(ctx.company_officers)} (da OpenCorporates/Atoka)
+{atoka_summary}
   sottodomini_totali: {len(all_subs)}
   profili_social_scraping: {len(ctx.social_profiles)}
   piva: {ctx.piva or "non trovata"}
