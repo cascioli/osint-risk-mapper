@@ -147,6 +147,9 @@ def _build_report_prompt(ctx: ScanContext) -> str:
     ))[:10]
     breached = [r.email for r in ctx.breach_results if r.hibp_breaches or r.leaklookup_sources]
     subs = list(dict.fromkeys(ctx.subdomains + ctx.vt_subdomains))[:15]
+    all_docs = ctx.exposed_documents + ctx.brand_dork_results
+    doc_titles = [d.get("title", "") for d in all_docs[:10] if d.get("title")]
+    social_sample = [r.get("title", "") for r in ctx.social_dork_results[:5] if r.get("title")]
 
     _target = ctx.domain or ctx.target_context.get("company_name") or "target sconosciuto"
     return f"""Produci un report OSINT professionale in italiano per il target: {_target}
@@ -160,12 +163,13 @@ Dati raccolti:
 - WHOIS registrante: {ctx.whois_data.get("registrant_name", "non trovato")}
 - P.IVA: {ctx.piva or "non trovata"}
 - Company officers: {[o.get("name") for o in ctx.company_officers[:5]]}
-- Social dork results: {len(ctx.social_dork_results)} trovati
-- Documenti esposti: {len(ctx.exposed_documents)} trovati
+- Social dork results: {len(ctx.social_dork_results)} trovati{f" — campione: {social_sample}" if social_sample else ""}
+- Documenti esposti/brand: {len(all_docs)} trovati{f" — titoli: {doc_titles}" if doc_titles else ""}
 - Atoka data: {ctx.atoka_data}
 - Iterazioni agente: {ctx.agent_iterations}
 
-Struttura il report con sezioni: Sommario Esecutivo, Persone Chiave, Rischi Email/Breach, Infrastruttura, Social/Web Presence, Raccomandazioni."""
+Struttura il report con sezioni: Sommario Esecutivo, Persone Chiave, Rischi Email/Breach, Infrastruttura, Social/Web Presence, Raccomandazioni.
+IMPORTANTE: se un dato mostra count > 0, menzionalo nel corpo del report — non scrivere "non trovato" per sezioni con dati presenti."""
 
 
 def run_openai_agent_loop(
@@ -182,6 +186,12 @@ def run_openai_agent_loop(
     if not ai_key:
         log_fn(f"[{_ts()}] ⚠️ agent/openai: OPENAI_API_KEY mancante — skip agente")
         return ctx
+
+    # Seed known contact email before first iteration so agent breach-checks it
+    _contact_email = ctx.target_context.get("contact_email", "").strip().lower()
+    if _contact_email and _contact_email not in ctx.emails:
+        ctx.emails.append(_contact_email)
+        log_fn(f"[{_ts()}] [agent/openai] Email input seedata: {_contact_email}")
 
     client = OpenAI(api_key=ai_key)
     tools = get_openai_tools()
@@ -265,6 +275,25 @@ def run_openai_agent_loop(
                 "content": json.dumps({"status": "ok", "reason": reason}),
             })
             break
+
+        # Think tool — log reasoning, no ctx side effects, exempt from dedup
+        if tool_name == "think":
+            reasoning = args.get("reasoning", "")
+            log_fn(f"[{_ts()}] [agent/openai] 💭 {reasoning}")
+            state.tool_call_log.append({
+                "iteration": state.agent_iterations,
+                "tool": "think",
+                "args": args,
+                "result_summary": reasoning[:120],
+                "duration_ms": 0,
+                "skipped_reason": None,
+            })
+            messages.append({
+                "role": "tool",
+                "tool_call_id": tc.id,
+                "content": json.dumps({"status": "ok", "summary": "ragionamento registrato"}),
+            })
+            continue
 
         # Dedup check
         call_key = make_call_key(tool_name, args)

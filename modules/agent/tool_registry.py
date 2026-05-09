@@ -35,6 +35,7 @@ TOOL_SERVICE_MAP: dict[str, str | None] = {
     "search_username_leaks": "serper",
     "search_registry_dork": "serper",
     "search_person_advanced": "serper",
+    "think": None,
     "finish_investigation": None,
 }
 
@@ -296,6 +297,17 @@ _TOOL_SPECS: list[tuple[str, str, dict, list[str]]] = [
             "city": {**_STR, "description": "Città, può essere vuoto"},
         },
         ["name"],
+    ),
+    # ── Reasoning ────────────────────────────────────────────────────────────
+    (
+        "think",
+        "Esprimi il tuo ragionamento su ciò che hai trovato e cosa farai dopo. "
+        "Usa questo tool per sintetizzare scoperte, giustificare la prossima azione, "
+        "e incrociare informazioni da fonti diverse. Non modifica il contesto — serve solo "
+        "per rendere il processo di indagine leggibile e tracciabile.",
+        {"reasoning": {**_STR, "description": "Analisi in italiano: cosa hai trovato, "
+         "cosa significa, cosa farai dopo e perché."}},
+        ["reasoning"],
     ),
     # ── Terminal signal ───────────────────────────────────────────────────────
     (

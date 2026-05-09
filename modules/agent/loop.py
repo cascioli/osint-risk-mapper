@@ -137,6 +137,12 @@ def run_agent_loop(
         log_fn(f"[{_ts()}] ⚠️ agent: GEMINI_API_KEY mancante — skip agente")
         return ctx
 
+    # Seed known contact email before first iteration so agent breach-checks it
+    _contact_email = ctx.target_context.get("contact_email", "").strip().lower()
+    if _contact_email and _contact_email not in ctx.emails:
+        ctx.emails.append(_contact_email)
+        log_fn(f"[{_ts()}] [agent] Email input seedata: {_contact_email}")
+
     client = genai.Client(api_key=ai_key)
     declarations = get_tool_declarations()
     tool = genai_types.Tool(function_declarations=declarations)
@@ -240,6 +246,28 @@ def run_agent_loop(
             state.agent_summary = reason
             log_fn(f"[{_ts()}] [agent] FINE indagine: {reason}")
             break
+
+        # Think tool — log reasoning, no ctx side effects, exempt from dedup
+        if tool_name == "think":
+            reasoning = args.get("reasoning", "")
+            log_fn(f"[{_ts()}] [agent] 💭 {reasoning}")
+            state.tool_call_log.append({
+                "iteration": state.agent_iterations,
+                "tool": "think",
+                "args": args,
+                "result_summary": reasoning[:120],
+                "duration_ms": 0,
+                "skipped_reason": None,
+            })
+            history.append(candidate.content)
+            history.append(genai_types.Content(
+                role="user",
+                parts=[genai_types.Part.from_function_response(
+                    name="think",
+                    response={"status": "ok", "summary": "ragionamento registrato"},
+                )],
+            ))
+            continue
 
         # Dedup check
         call_key = make_call_key(tool_name, args)

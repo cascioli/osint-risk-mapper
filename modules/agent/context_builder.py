@@ -47,7 +47,9 @@ def build_context_summary(
 
     log_lines = []
     for entry in tool_call_log[-15:]:
-        if entry.get("skipped_reason"):
+        if entry["tool"] == "think":
+            log_lines.append(f"  [THINK] {entry.get('result_summary', '')}")
+        elif entry.get("skipped_reason"):
             log_lines.append(f"  [SKIP] {entry['tool']}({entry['args']}) — {entry['skipped_reason']}")
         else:
             log_lines.append(f"  {entry['tool']}({entry['args']}) → {entry.get('result_summary', '')}")
