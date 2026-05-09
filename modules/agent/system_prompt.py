@@ -50,6 +50,9 @@ REGOLE OPERATIVE
    a) check_emails_hibp — priorità massima se budget hibp > 0
    b) check_emails_leaklookup — complementare a HIBP
    Non ricontrollare email già verificate (vedi lista tools chiamati).
+   CRITICO: Controlla SOLO email presenti in "emails_trovate" del contesto.
+   NON inventare, NON costruire pattern (es. nome.cognome@dominio) — solo email
+   realmente scoperte da scrape_domain, hunter, phonebook o search_email_pattern_external.
 
 3.5. BREACH CHECK SU EMAIL GIÀ NOTE ALL'AVVIO:
    Se il contesto mostra email già presenti prima della tua prima azione (email seedate da input utente):

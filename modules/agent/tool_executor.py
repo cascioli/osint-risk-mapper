@@ -79,10 +79,15 @@ def _dispatch(
         ctx.scraped_contacts = result
         if result.get("piva") and not ctx.piva:
             ctx.piva = result["piva"]
-        for link in result.get("social_links", []):
-            plat = _detect_platform(link)
-            if plat and not any(p.url == link for p in ctx.social_profiles):
-                ctx.social_profiles.append(SocialProfile(platform=plat, url=link, source="scraped"))
+        for link_data in result.get("social_links", []):
+            if isinstance(link_data, dict):
+                url = link_data.get("url", "")
+                plat = link_data.get("platform") or _detect_platform(url)
+            else:
+                url = link_data
+                plat = _detect_platform(url)
+            if url and plat and not any(p.url == url for p in ctx.social_profiles):
+                ctx.social_profiles.append(SocialProfile(platform=plat, url=url, source="scraped"))
         log_fn(f"[agent] scrape_domain({domain}) → {len(new_emails)} nuove email, piva={ctx.piva}")
         return {
             "emails_found": len(ctx.emails),
@@ -198,6 +203,14 @@ def _dispatch(
             return {"error": "hibp_key mancante", "summary": "skip: no hibp_key"}
         if not emails:
             return {"summary": "nessuna email da verificare"}
+        # Only check emails actually discovered by tools — reject hallucinated addresses
+        discovered = set(ctx.emails)
+        hallucinated = [e for e in emails if e not in discovered]
+        emails = [e for e in emails if e in discovered]
+        if hallucinated:
+            log_fn(f"[agent] ⚠️ check_emails_hibp: {len(hallucinated)} email non scoperte filtrate: {hallucinated[:3]}")
+        if not emails:
+            return {"summary": "nessuna email valida da verificare — le email devono essere scoperte da tool prima", "filtered": hallucinated}
         already_checked = {r.email for r in ctx.breach_results}
         new_emails = [e for e in emails if e not in already_checked]
         if not new_emails:
@@ -222,6 +235,14 @@ def _dispatch(
             return {"error": "leaklookup_key mancante", "summary": "skip: no leaklookup_key"}
         if not emails:
             return {"summary": "nessuna email da verificare"}
+        # Only check emails actually discovered by tools — reject hallucinated addresses
+        discovered = set(ctx.emails)
+        hallucinated = [e for e in emails if e not in discovered]
+        emails = [e for e in emails if e in discovered]
+        if hallucinated:
+            log_fn(f"[agent] ⚠️ check_emails_leaklookup: {len(hallucinated)} email non scoperte filtrate: {hallucinated[:3]}")
+        if not emails:
+            return {"summary": "nessuna email valida da verificare — le email devono essere scoperte da tool prima", "filtered": hallucinated}
         result = _with_retry(lambda: check_emails_for_breaches(emails, ll_key)) or {}
         _merge_breach_results(ctx, emails, {}, result)
         budget.record("leaklookup", len(emails))

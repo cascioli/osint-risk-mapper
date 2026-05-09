@@ -201,8 +201,10 @@ def _render_running_phase(config: dict, domain: str, target_context: dict) -> No
         st.error("❌ Nessuna API key AI configurata. Imposta GEMINI_API_KEY o OPENAI_API_KEY nel file .env.")
         return
     from modules.agent.budget_tracker import BudgetConfig
+    _max_iter = config.get("agent_max_iterations", 30)
     budget_cfg = BudgetConfig(
-        max_iterations=config.get("agent_max_iterations", 30),
+        max_iterations=_max_iter,
+        max_gemini_calls=_max_iter,
         max_serper_calls=config.get("agent_max_serper_calls", 40),
     )
     if config.get("provider") == "openai":
