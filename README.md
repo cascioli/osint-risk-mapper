@@ -114,18 +114,23 @@ osintriskmapper/
 │   ├── gemini_guidance.py      # Round 1.5 Gemini strategic guidance
 │   ├── phonebook_client.py     # PhoneBook.cz email discovery
 │   ├── opencorporates_client.py# OpenCorporates REST API — Italian company officers
+│   ├── inipec_client.py        # inipec.gov.it — official Italian PEC email registry (no key)
+│   ├── atoka_client.py         # Atoka.io — Italian company enrichment (ATECO, officers, PEC)
 │   ├── vt_client.py            # VirusTotal API v3 — passive subdomain enumeration
 │   ├── hibp_client.py          # HaveIBeenPwned API v3 — breach check per email
 │   ├── osint_dorking.py        # Google dork functions (docs/LinkedIn/Twitter/GitHub/Pastebin/VAT)
 │   ├── osint_hunter.py         # Hunter.io email discovery
 │   ├── osint_leaklookup.py     # Leak-Lookup breach check
 │   ├── osint_subdomains.py     # crt.sh + HackerTarget subdomain enumeration
+│   ├── dehashed_client.py      # DeHashed breach lookup by username/email/name/phone
+│   ├── intelx_client.py        # IntelX leaked DB intelligence search
+│   ├── social_scraper.py       # Instagram + Facebook profile scraper (bio/email/phone, no key)
 │   ├── unified_report.py       # Cross-correlated final Gemini report
 │   ├── graph_builder.py        # NetworkX + Plotly connection graph
 │   ├── dashboard_map.py        # Foggia province heatmap (demo page)
-│   ├── ai_analyzer.py          # AI analysis helpers
-│   ├── llm_client.py           # LLM client wrapper
-│   └── ui.py                   # Reusable Streamlit UI components
+│   ├── ai_analyzer.py          # Gemini executive risk report (breach + subdomains + documents)
+│   ├── llm_client.py           # SOC-oriented Gemini host/network analysis
+│   └── ui.py                   # Streamlit UI components for host analysis mode
 └── utils/
     └── config.py               # API key loader — st.secrets (cloud) or .env (local)
 ```
@@ -154,8 +159,12 @@ All keys are optional. Missing keys silently disable the corresponding module.
 | `LEAKLOOKUP_API_KEY` | Leak-Lookup breach DB | Yes | [leak-lookup.com](https://leak-lookup.com) |
 | `VIRUSTOTAL_API_KEY` | VirusTotal passive DNS | 500 req/day | [virustotal.com](https://www.virustotal.com) |
 | `OPENCORPORATES_API_KEY` | OpenCorporates company registry | Yes (limited) | [opencorporates.com](https://opencorporates.com/api_accounts/new) |
+| `ATOKA_API_KEY` | Atoka.io Italian company enrichment | No | [atoka.io](https://atoka.io) |
+| `DEHASHED_API_KEY` + `DEHASHED_EMAIL` | DeHashed breach lookup (Basic auth) | No | [dehashed.com](https://dehashed.com) |
+| `INTELX_API_KEY` | IntelX leaked DB search | Limited | [intelx.io](https://intelx.io) |
+| `OPENAI_API_KEY` | OpenAI-compatible LLM backend (alternative to Gemini) | No | [platform.openai.com](https://platform.openai.com) |
 
-> **Always free, no key needed:** crt.sh, HackerTarget, BeautifulSoup web scraping, python-whois, PhoneBook.cz
+> **Always free, no key needed:** crt.sh, HackerTarget, BeautifulSoup web scraping, python-whois, PhoneBook.cz, inipec.gov.it (PEC registry), Instagram/Facebook profile scraper
 
 ---
 

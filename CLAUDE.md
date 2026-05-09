@@ -52,17 +52,28 @@ domain input
 | `modules/unified_report.py` | Cross-correlated final Gemini report (person+data focused) |
 | `modules/graph_builder.py` | NetworkX + Plotly connection graph (people/breaches/social nodes) |
 | `modules/dashboard_map.py` | Foggia province heatmap (separate Streamlit page) |
+| `modules/ai_analyzer.py` | Gemini executive risk report from breach+subdomain+document data |
+| `modules/llm_client.py` | SOC-oriented Gemini host/network analysis (separate host-analysis flow) |
+| `modules/ui.py` | Streamlit UI components for host analysis mode (ZoomEye/Censys/LeakIX sidebar, metrics, consolidated table) |
+| `modules/inipec_client.py` | inipec.gov.it — official Italian PEC email registry lookup (no key needed) |
+| `modules/atoka_client.py` | Atoka.io — Italian company enrichment (ATECO, officers, PEC, revenue) |
+| `modules/dehashed_client.py` | DeHashed breach lookup by username/email/name/phone |
+| `modules/intelx_client.py` | IntelX leaked DB search — two-step POST+GET pattern |
+| `modules/social_scraper.py` | Instagram + Facebook profile scraper — extracts bio/email/phone from og: meta and JSON-LD (no key needed) |
 | `utils/config.py` | Loads API keys from `st.secrets` (Streamlit Cloud) or `.env` (local) |
 
 ### `ScanContext` — the central data model
 
 Dataclass defined in `modules/scan_context.py`. Passed by reference through all rounds.
 
+- **Onboarding:** `target_context` dict `{company_name, owner_names, city, contact_email}` — seeds person_names and emails before Round 1
 - **Round 1:** `emails`, `scraped_contacts`, `whois_data`, `subdomains`, `vt_subdomains`, `exposed_documents`, `person_names`, `piva`
 - **Round 1.5:** `gemini_guidance`, `company_officers`, `phonebook_emails`, `related_domains`
 - **Round 2:** `breach_results`, `social_profiles`, `social_dork_results`, `brand_dork_results`, `instagram_results`, `facebook_results`
 - **Round 3:** `llm_suggested_people`, `llm_suggested_queries`, `person_profiles`, `llm_followup_results`
 - **Final:** `unified_report`, `graph_data`
+- **Atoka enrichment:** `atoka_data` dict (name, piva, ateco, officers, fatturato, etc.)
+- **Agent mode metadata:** `agent_iterations`, `agent_tool_call_log`, `agent_summary` (empty when pipeline mode used)
 
 Supporting dataclasses: `BreachResult`, `SocialProfile`, `PersonProfile`.
 
@@ -85,8 +96,12 @@ Missing API keys disable modules silently (`if config.get("KEY"): ...`). App run
 | Google Gemini 2.5 Flash | AI analysis + guidance + reports | `GEMINI_API_KEY` |
 | Serper or SerpAPI | Google dorking (all dork functions) | `SERPER_API_KEY` or `SERPAPI_KEY` |
 | OpenCorporates | Italian company registry officers | `OPENCORPORATES_API_KEY` (optional — dork fallback if absent) |
+| Atoka.io | Italian company enrichment (ATECO, officers, PEC, revenue) | `ATOKA_API_KEY` |
+| DeHashed | Breach lookup by username/email/name/phone | `DEHASHED_API_KEY` + `DEHASHED_EMAIL` (Basic auth) |
+| IntelX | Leaked DB intelligence search | `INTELX_API_KEY` |
+| OpenAI | Alternative LLM backend | `OPENAI_API_KEY` |
 
-crt.sh, HackerTarget, BeautifulSoup scraping, python-whois, and PhoneBook.cz need no key.
+crt.sh, HackerTarget, BeautifulSoup scraping, python-whois, PhoneBook.cz, inipec.gov.it, and social_scraper need no key.
 
 ## Stack
 

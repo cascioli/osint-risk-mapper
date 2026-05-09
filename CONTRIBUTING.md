@@ -9,7 +9,7 @@ Thanks for your interest. Contributions are welcome — especially new OSINT dat
 
 ## What's useful
 
-- **New free OSINT sources** — integrations that work without an API key are particularly valuable (following the pattern of crt.sh, HackerTarget, PhoneBook.cz)
+- **New free OSINT sources** — integrations that work without an API key are particularly valuable (following the pattern of crt.sh, HackerTarget, PhoneBook.cz, inipec.gov.it, social_scraper)
 - **New optional API integrations** — must degrade gracefully when the key is absent (`if config.get("KEY"): ...`)
 - **Bug fixes** — especially around rate limits, parsing edge cases, and encoding issues with non-ASCII company names
 - **Export improvements** — additional CSV columns, better Markdown formatting, new export formats
@@ -39,15 +39,14 @@ Thanks for your interest. Contributions are welcome — especially new OSINT dat
 # modules/myservice_client.py
 
 import requests
-from utils.config import get_config
 
-def fetch_data(domain: str) -> list[str]:
-    config = get_config()
-    api_key = config.get("MYSERVICE_API_KEY")
+def fetch_data(domain: str, api_key: str) -> list[str]:
     if not api_key:
         return []
     # ... implementation
 ```
+
+The `api_key` is passed in from `ScanContext.config` (a dict populated by `utils.config.get_api_keys()`). Add the key name to `utils/config.py`'s `_KEYS` list and pass it through the orchestrator call.
 
 Key invariants:
 - Return an empty list/dict on failure — never raise to the caller
