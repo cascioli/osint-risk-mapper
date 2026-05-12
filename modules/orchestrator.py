@@ -168,11 +168,32 @@ def run_round1(
         log_fn(f"[{_ts()}] Round 1 → Hunter.io: key mancante, skip")
     progress_fn(0.24)
 
-    # Merge all discovered emails (scraped + hunter + user-provided), dedup
+    # theHarvester — passive multi-source email + subdomain discovery
+    harvester_emails: list[str] = []
+    harvester_subdomains: list[str] = []
+    log_fn(f"[{_ts()}] Round 1 → theHarvester: avvio...")
+    try:
+        from modules.theharvester_client import run_theharvester
+        harvester = run_theharvester(ctx.domain, config)
+        harvester_emails = harvester.get("emails", [])
+        harvester_subdomains = harvester.get("subdomains", [])
+        log_fn(
+            f"[{_ts()}] Round 1 → theHarvester: "
+            f"{len(harvester_emails)} email, {len(harvester_subdomains)} subdomains"
+        )
+    except Exception as exc:
+        log_fn(f"[{_ts()}] ⚠️ Round 1 → theHarvester ERRORE: {exc}")
+    progress_fn(0.27)
+
+    if harvester_subdomains:
+        ctx.subdomains = list(dict.fromkeys(ctx.subdomains + harvester_subdomains))
+
+    # Merge all discovered emails (scraped + hunter + theHarvester + user-provided), dedup
     all_emails = list(dict.fromkeys(
         ctx.emails
         + ctx.scraped_contacts.get("emails", [])
         + hunter_emails
+        + harvester_emails
     ))
 
     # Add WHOIS registrant email if present
@@ -186,7 +207,7 @@ def run_round1(
     ctx.piva = ctx.scraped_contacts.get("piva")
     if ctx.piva:
         log_fn(f"[{_ts()}] Round 1 → P.IVA estratta da scraping: {ctx.piva}")
-    progress_fn(0.26)
+    progress_fn(0.28)
 
     # Social profiles from scraping
     for slink in ctx.scraped_contacts.get("social_links", []):
