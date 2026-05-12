@@ -29,7 +29,7 @@ Out of scope:
 
 **Do not open a public GitHub Issue for security vulnerabilities.**
 
-Report privately via GitHub's [private vulnerability reporting](https://github.com/cascioli/osintriskmapper/security/advisories/new), or email directly at the address listed on the GitHub profile.
+Report privately via GitHub's [private vulnerability reporting](https://github.com/cascioli/osint-risk-mapper/security/advisories/new), or email directly at the address listed on the GitHub profile.
 
 Include:
 

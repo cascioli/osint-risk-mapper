@@ -8,7 +8,7 @@
 ![Streamlit](https://img.shields.io/badge/Streamlit-1.35%2B-FF4B4B?logo=streamlit&logoColor=white)
 ![License: MIT](https://img.shields.io/badge/License-MIT-green)
 ![OSINT: Passive Only](https://img.shields.io/badge/OSINT-Passive%20Only-orange)
-![Last Commit](https://img.shields.io/github/last-commit/cascioli/osintriskmapper)
+![Last Commit](https://img.shields.io/github/last-commit/cascioli/osint-risk-mapper)
 
 ---
 
@@ -104,7 +104,7 @@ domain input
 ## Architecture
 
 ```
-osintriskmapper/
+osint-risk-mapper/
 ├── app.py                      # Streamlit entry point — session state, pipeline phases, export
 ├── modules/
 │   ├── orchestrator.py         # run_round1/1_5/2/3/final() — pipeline execution with callbacks
@@ -174,8 +174,8 @@ All keys are optional. Missing keys silently disable the corresponding module.
 
 ```bash
 # 1. Clone the repository
-git clone https://github.com/cascioli/osintriskmapper.git
-cd osintriskmapper
+git clone https://github.com/cascioli/osint-risk-mapper.git
+cd osint-risk-mapper
 
 # 2. Create and activate virtual environment
 python -m venv .venv
