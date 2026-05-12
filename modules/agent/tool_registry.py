@@ -8,6 +8,7 @@ from google.genai import types as genai_types
 # None means the tool is free (no API key needed).
 TOOL_SERVICE_MAP: dict[str, str | None] = {
     "scrape_domain": None,
+    "run_theharvester": None,
     "fetch_whois": None,
     "get_subdomains": None,
     "fetch_emails_phonebook": None,
@@ -49,6 +50,15 @@ _TOOL_SPECS: list[tuple[str, str, dict, list[str]]] = [
         "scrape_domain",
         "Scraping passivo del dominio target: estrae email, telefoni, link social, "
         "tech hints e P.IVA. Chiamare SEMPRE come primo tool.",
+        {"domain": {**_STR, "description": "Dominio target, es. example.it"}},
+        ["domain"],
+    ),
+    (
+        "run_theharvester",
+        "Scoperta passiva email e sottodomini via theHarvester (bing, dnsdumpster, crt.sh, "
+        "hackertarget, anubis, rapiddns, otx, urlscan, yahoo + Hunter/VT/IntelX se chiavi disponibili). "
+        "Il tool più completo per email discovery passiva — nessun scan attivo. "
+        "Chiamare SEMPRE come secondo tool dopo scrape_domain.",
         {"domain": {**_STR, "description": "Dominio target, es. example.it"}},
         ["domain"],
     ),

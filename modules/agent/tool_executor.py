@@ -97,6 +97,31 @@ def _dispatch(
             "summary": f"{len(new_emails)} email trovate, piva={ctx.piva}",
         }
 
+    if tool_name == "run_theharvester":
+        from modules.theharvester_client import run_theharvester
+        domain = args.get("domain") or ctx.domain
+        if not domain:
+            return {"error": "domain non ancora noto — scoprilo prima con atoka/dork/email", "summary": "skip: domain unknown"}
+        if ctx.domain is None:
+            ctx.domain = domain
+        result = _with_retry(lambda: run_theharvester(domain, cfg)) or {"emails": [], "subdomains": [], "skipped_reason": "timeout/errore"}
+        skip = result.get("skipped_reason")
+        if skip:
+            log_fn(f"[agent] run_theharvester({domain}) → skip: {skip}")
+            return {"summary": f"skip: {skip}", "skipped_reason": skip}
+        new_emails = [e for e in result.get("emails", []) if e not in ctx.emails]
+        ctx.emails = list(dict.fromkeys(ctx.emails + new_emails))
+        new_subs = [s for s in result.get("subdomains", []) if s not in ctx.subdomains]
+        ctx.subdomains = list(dict.fromkeys(ctx.subdomains + new_subs))
+        log_fn(f"[agent] run_theharvester({domain}) → {len(new_emails)} email, {len(new_subs)} sottodomini")
+        return {
+            "new_emails": new_emails,
+            "new_subdomains": len(new_subs),
+            "total_emails": len(ctx.emails),
+            "total_subdomains": len(ctx.subdomains),
+            "summary": f"theHarvester: {len(new_emails)} nuove email, {len(new_subs)} nuovi sottodomini",
+        }
+
     if tool_name == "fetch_whois":
         from modules.whois_client import fetch_whois
         domain = args.get("domain") or ctx.domain
@@ -382,6 +407,7 @@ def _dispatch(
         return {"results": len(result), "summary": f"{len(result)} menzioni P.IVA {piva}"}
 
     if tool_name == "search_email_pattern_external":
+        import re as _re
         from modules.osint_dorking import search_email_pattern_external
         domain = args.get("domain") or ctx.domain
         if not domain:
@@ -392,9 +418,27 @@ def _dispatch(
             return {"error": "serper_key mancante", "summary": "skip: no serper_key"}
         result = _with_retry(lambda: search_email_pattern_external(domain, serper_key, serpapi_key)) or []
         ctx.llm_followup_results = _dedup_urls(ctx.llm_followup_results, result)
+        # Extract actual email addresses from search snippets
+        _email_re = _re.compile(
+            r'\b[a-zA-Z0-9._%+\-]+@' + _re.escape(domain) + r'\b',
+            _re.IGNORECASE,
+        )
+        found_in_snippets: list[str] = []
+        for item in result:
+            for field in ("snippet", "title", "body"):
+                text = item.get(field, "")
+                found_in_snippets.extend(_email_re.findall(text))
+        deduped = list(dict.fromkeys(e.lower() for e in found_in_snippets))
+        new_emails = [e for e in deduped if e not in ctx.emails]
+        if new_emails:
+            ctx.emails = list(dict.fromkeys(ctx.emails + new_emails))
         budget.record("serper")
-        log_fn(f"[agent] search_email_pattern_external({domain}) → {len(result)} risultati")
-        return {"results": len(result), "summary": f"{len(result)} email pattern esterne"}
+        log_fn(f"[agent] search_email_pattern_external({domain}) → {len(result)} risultati, {len(new_emails)} email estratte")
+        return {
+            "results": len(result),
+            "new_emails": new_emails,
+            "summary": f"{len(result)} risultati, {len(new_emails)} email estratte dai snippet",
+        }
 
     if tool_name == "search_by_query":
         from modules.osint_dorking import search_by_query

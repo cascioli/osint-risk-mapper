@@ -51,15 +51,20 @@ def _find_binary() -> str | None:
     return shutil.which("theHarvester") or shutil.which("theharvester")
 
 
+def is_available() -> bool:
+    """Return True if theHarvester binary is found in PATH."""
+    return _find_binary() is not None
+
+
 def run_theharvester(domain: str, config: dict) -> dict[str, list[str]]:
-    """Run theHarvester for domain. Returns {"emails": [...], "subdomains": [...]}."""
-    empty: dict[str, list[str]] = {"emails": [], "subdomains": []}
+    """Run theHarvester for domain. Returns {"emails": [...], "subdomains": [...], "skipped_reason": str|None}."""
+    empty: dict[str, list[str]] = {"emails": [], "subdomains": [], "skipped_reason": None}
     if not domain:
-        return empty
+        return {**empty, "skipped_reason": "domain vuoto"}
 
     binary = _find_binary()
     if not binary:
-        return empty
+        return {**empty, "skipped_reason": "binary non trovato in PATH (installare theHarvester)"}
 
     _write_api_keys(config)
     sources = _get_sources(config)

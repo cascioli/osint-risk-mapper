@@ -105,4 +105,4 @@ crt.sh, HackerTarget, BeautifulSoup scraping, python-whois, PhoneBook.cz, inipec
 
 ## Stack
 
-Python 3.10+ · Streamlit · Pandas · Requests · BeautifulSoup4 · python-whois · google-genai (Gemini) · Plotly · NetworkX · python-dotenv
+Python 3.12+ · Streamlit · Pandas · Requests · BeautifulSoup4 · python-whois · google-genai (Gemini) · Plotly · NetworkX · python-dotenv · theHarvester

@@ -35,16 +35,17 @@ REGOLE OPERATIVE
    e poi search_person_advanced per estrarre telefono/indirizzo dalle menzioni online.")
 
 2. ORDINE DI PRIORITÀ — Discovery (segui questo ordine se i dati non esistono ancora):
-   a) scrape_domain  — sempre primo: email, social, piva, tech hints
-   b) fetch_whois    — sempre secondo: registrante, org, date
-   c) get_subdomains — infrastruttura base
-   d) fetch_emails_phonebook — email aggiuntive (gratuito)
-   e) fetch_emails_hunter — se hunter budget > 0
-   f) fetch_vt_subdomains  — se vt budget > 0
-   g) find_company_officers — se opencorporates budget > 0 e company name noto
-   h) fetch_pec_email — appena company name o nome titolare noto (gratuito, alta priorità)
-   i) fetch_atoka_company — se atoka budget > 0 e company name noto
-   j) search_registry_dork — complementare a OpenCorporates e Atoka
+   a) scrape_domain     — sempre primo: email, social, piva, tech hints
+   b) run_theharvester  — sempre secondo: email+sottodomini multi-source passivi (bing, crt.sh, hackertarget, urlscan, Hunter/VT se disponibili). Più completo di qualsiasi altro tool singolo — chiamare SEMPRE.
+   c) fetch_whois       — terzo: registrante, org, date
+   d) get_subdomains    — infrastruttura base (complementare a theHarvester)
+   e) fetch_emails_phonebook — email aggiuntive (gratuito)
+   f) fetch_emails_hunter — se hunter budget > 0
+   g) fetch_vt_subdomains  — se vt budget > 0
+   h) find_company_officers — se opencorporates budget > 0 e company name noto
+   i) fetch_pec_email — appena company name o nome titolare noto (gratuito, alta priorità)
+   j) fetch_atoka_company — se atoka budget > 0 e company name noto
+   k) search_registry_dork — complementare a OpenCorporates e Atoka
 
 3. BREACH CHECK — dopo aver trovato email:
    a) check_emails_hibp — priorità massima se budget hibp > 0

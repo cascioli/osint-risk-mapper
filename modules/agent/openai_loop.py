@@ -87,15 +87,16 @@ def _run_final_phase(ctx: ScanContext, log_fn: LogFn, progress_fn: ProgressFn) -
     if ai_provider == "openai" and ai_key:
         # Generate report via OpenAI
         try:
+            from modules.unified_report import _SYSTEM_PROMPT as _UNIFIED_SYSTEM, _build_unified_prompt
             openai_client = OpenAI(api_key=ai_key)
-            prompt = _build_report_prompt(ctx)
+            prompt = _build_unified_prompt(ctx)
             resp = openai_client.chat.completions.create(
                 model=ctx.config.get("model_name", _DEFAULT_MODEL),
                 messages=[
-                    {"role": "system", "content": "Sei un analista OSINT esperto. Produci report professionali in italiano."},
+                    {"role": "system", "content": _UNIFIED_SYSTEM},
                     {"role": "user", "content": prompt},
                 ],
-                temperature=0.2,
+                temperature=0.3,
             )
             ctx.unified_report = resp.choices[0].message.content
             _usage = getattr(resp, "usage", None)
@@ -137,39 +138,6 @@ def _run_final_phase(ctx: ScanContext, log_fn: LogFn, progress_fn: ProgressFn) -
 
     progress_fn(1.0)
 
-
-def _build_report_prompt(ctx: ScanContext) -> str:
-    """Build a concise OSINT summary prompt for the final report."""
-    emails = ctx.emails[:20]
-    people = list(dict.fromkeys(
-        ctx.person_names + ctx.llm_suggested_people
-        + [o.get("name", "") for o in ctx.company_officers]
-    ))[:10]
-    breached = [r.email for r in ctx.breach_results if r.hibp_breaches or r.leaklookup_sources]
-    subs = list(dict.fromkeys(ctx.subdomains + ctx.vt_subdomains))[:15]
-    all_docs = ctx.exposed_documents + ctx.brand_dork_results
-    doc_titles = [d.get("title", "") for d in all_docs[:10] if d.get("title")]
-    social_sample = [r.get("title", "") for r in ctx.social_dork_results[:5] if r.get("title")]
-
-    _target = ctx.domain or ctx.target_context.get("company_name") or "target sconosciuto"
-    return f"""Produci un report OSINT professionale in italiano per il target: {_target}
-
-Dati raccolti:
-- Azienda: {ctx.target_context.get("company_name", "sconosciuta")}
-- Email trovate: {emails}
-- Email compromesse in breach: {breached}
-- Persone identificate: {people}
-- Sottodomini: {subs}
-- WHOIS registrante: {ctx.whois_data.get("registrant_name", "non trovato")}
-- P.IVA: {ctx.piva or "non trovata"}
-- Company officers: {[o.get("name") for o in ctx.company_officers[:5]]}
-- Social dork results: {len(ctx.social_dork_results)} trovati{f" — campione: {social_sample}" if social_sample else ""}
-- Documenti esposti/brand: {len(all_docs)} trovati{f" — titoli: {doc_titles}" if doc_titles else ""}
-- Atoka data: {ctx.atoka_data}
-- Iterazioni agente: {ctx.agent_iterations}
-
-Struttura il report con sezioni: Sommario Esecutivo, Persone Chiave, Rischi Email/Breach, Infrastruttura, Social/Web Presence, Raccomandazioni.
-IMPORTANTE: se un dato mostra count > 0, menzionalo nel corpo del report — non scrivere "non trovato" per sezioni con dati presenti."""
 
 
 def run_openai_agent_loop(
